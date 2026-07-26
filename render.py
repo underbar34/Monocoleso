@@ -8,7 +8,11 @@ def render(screen, state, pls, ground_y):
     # Отрисовка платформ
     for pl in pls:
         screen.blit(state.images['platform'], (pl.x, pl.y))
-    
+
+    # Отрисовка плащика
+    if not state.plashik_podobran:
+        screen.blit(state.images['plashik'], (state.plashikx, state.plashiky))
+
     # Отрисовка игрока
     screen.blit(state.player, (state.playerx, state.playery))
     

@@ -3,7 +3,7 @@ import pygame
 import sys
 from config import WIDTH, HEIGHT, FPS, load_images, GameState
 from platforms import create_platforms
-from logic import update_akum, get_ground_y, update_player_movement, handle_events
+from logic import update_akum, get_ground_y, update_player_movement, handle_events, update_plashik
 from render import render
 
 def main():
@@ -41,6 +41,9 @@ def main():
         
         # Получение высоты земли
         ground_y = get_ground_y(pls, state.playerx, state.playery)
+        
+        # Подбор плащика
+        update_plashik(state)
         
         # Обработка событий клавиатуры
         handle_events(state, keys)

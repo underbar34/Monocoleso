@@ -11,6 +11,13 @@ FPS = 30
 # Задержка атаки (1/3 секунды)
 ATAKA_ZADERZHKA = FPS // 3
 
+# Рывок
+RYVOK_VREMYA = int(FPS * 0.6)
+RYVOK_SPEED = 22
+
+# Плащик: заморозка после подбора (1.2 сек)
+PLASHIK_ZAMOROZKA = int(FPS * 1.2)
+
 # Гравитация
 GRAVITI = 1.3
 
@@ -51,6 +58,10 @@ def load_images():
     images['playerstoit1'] = pygame.image.load("Assets/Tems/Tems(stoit1).png")
     images['playerstoit2'] = pygame.image.load("Assets/Tems/Tems(stoit2).png")
     images['platform'] = pygame.image.load("Assets/locat/platform.png")
+    # Плащик — простой квадратик
+    plashik = pygame.Surface((28, 28))
+    plashik.fill((40, 160, 200))
+    images['plashik'] = plashik
     return images
 
 # Игровые переменные
@@ -80,3 +91,14 @@ class GameState:
         self.akumpower = 5
         self.akum = images['akum0']
         self.images = images
+        self.lookdir = 1
+        # Плащик на платформе справа (не стартовая)
+        self.plashik_podobran = False
+        self.plashikx = 930
+        self.plashiky = 460
+        self.plashik_zamorozka = 0
+        # Рывок
+        self.ryvok = False
+        self.ryvok_timer = 0
+        self.ryvok_dir = 1
+        self.shift_derzali = False
