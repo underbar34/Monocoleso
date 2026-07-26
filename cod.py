@@ -12,7 +12,7 @@ clock = pygame.time.Clock()
 FPS = 30  # Устанавливаем нужное значение FPS
 
 # Игровые переменные, если надо, описываем в этом блоке
-player=pygame.image.load("Tems(stoit1).png")
+player=pygame.image.load("Assets/Tems/Tems(stoit1).png")
 playerx=300
 playery=200
 y_vel=0
