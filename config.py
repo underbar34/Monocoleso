@@ -1,4 +1,4 @@
-# config.py
+# config.pу
 import pygame
 
 # Размеры окна
