@@ -39,21 +39,13 @@ def update_player_movement(state, keys, ground_y):
     # Смена спрайтов при движении
     if state.playermovex == 1:
         state.player = state.images['playeridet1']
-        if state.atakapl:
-            state.flagatak = 1
     elif state.playermovex == -1:
         state.player = state.images['playeridet2']
-        if state.atakapl:
-            state.flagatak = 2
     else:
         if state.player == state.images['playeridet1'] or state.player == state.images['playerstoit1']:
             state.player = state.images['playerstoit1']
-            if state.atakapl:
-                state.flagatak = 1
         elif state.player == state.images['playeridet2'] or state.player == state.images['playerstoit2']:
             state.player = state.images['playerstoit2']
-            if state.atakapl:
-                state.flagatak = 2
     
     # Прыжок
     if keys[pygame.K_SPACE] == 1 and state.timer == 0 and state.playery == ground_y and state.playermovey < 0.1:
@@ -91,8 +83,19 @@ def handle_events(state, keys):
     if keys[pygame.K_s] and state.otpuskal and state.playermovey == 0:
         state.playery += 40
     
-    if keys[pygame.K_w] and not state.atakapl:
-        state.atakapl = True
+    if not state.atakapl:
+        if keys[pygame.K_RIGHT]:
+            state.atakapl = True
+            state.flagatak = 1
+        elif keys[pygame.K_LEFT]:
+            state.atakapl = True
+            state.flagatak = 2
+        elif keys[pygame.K_UP]:
+            state.atakapl = True
+            state.flagatak = 3
+        elif keys[pygame.K_DOWN]:
+            state.atakapl = True
+            state.flagatak = 4
     
     if keys[pygame.K_e] and state.akumpower == 5:
         state.akumpower = 0

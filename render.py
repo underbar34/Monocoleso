@@ -30,6 +30,12 @@ def render(screen, state, pls, ground_y):
         atakax = state.playerx - 30
         screen.blit(state.images['playerataka2'], (atakax, state.playery - 10))
         state.vrematakpl += 1
+    elif state.flagatak == 3 and state.vrematakpl <= 5:
+        screen.blit(state.images['playerataka3'], (state.playerx - 10, state.playery - 50))
+        state.vrematakpl += 1
+    elif state.flagatak == 4 and state.vrematakpl <= 5:
+        screen.blit(state.images['playerataka4'], (state.playerx - 10, state.playery + 30))
+        state.vrematakpl += 1
     else:
         state.atakapl = False
         state.flagatak = 0
