@@ -12,7 +12,7 @@ def main():
     
     # Создание окна
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("My Game")
+    pygame.display.set_caption("Monocoleso")
     
     # Загрузка изображений
     images = load_images()
