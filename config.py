@@ -6,14 +6,15 @@ WIDTH = 1560
 HEIGHT = 800
 
 # FPS
-FPS = 30
+FPS = 60
 
 # Задержка атаки (1/3 секунды)
 ATAKA_ZADERZHKA = FPS // 3
 
 # Рывок
-RYVOK_VREMYA = int(FPS * 0.6)
-RYVOK_SPEED = 22
+RYVOK_VREMYA = int(FPS * 0.3)
+RYVOK_SPEED = 11
+RYVOK_ZADERZHKA = int(FPS * 0.5)
 
 # Плащик: заморозка после подбора (1.2 сек)
 PLASHIK_ZAMOROZKA = int(FPS * 1.2)
@@ -21,9 +22,15 @@ PLASHIK_ZAMOROZKA = int(FPS * 1.2)
 # Гравитация
 GRAVITI = 1.3
 
-# Скорости
-SPEED_PLAYER = 5
-SPEED_PLAYER_Y = 10
+# Скорости (подогнаны под 60 FPS, поведение как на 30)
+SPEED_PLAYER = 2.5
+SPEED_PLAYER_Y = 5
+
+# Таймер прыжка в кадрах
+JUMP_TIMER_MAX = 30
+
+# Длительность анимации атаки в кадрах
+ATAKA_KADRY = 10
 
 # Земля по умолчанию
 GROUND_Y = 526
@@ -32,7 +39,7 @@ GROUND_Y = 526
 HEALTH_MAX = 5
 
 # Неуязвимость
-NEUYAZVIMOST_MAX = 30
+NEUYAZVIMOST_MAX = 60
 
 # Акум
 MAX_AKUM_POWER = 5
@@ -101,4 +108,5 @@ class GameState:
         self.ryvok = False
         self.ryvok_timer = 0
         self.ryvok_dir = 1
+        self.ryvok_zaderzhka = 0
         self.shift_derzali = False

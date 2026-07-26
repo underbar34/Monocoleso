@@ -1,7 +1,8 @@
 # logic.py
 from config import (
     GROUND_Y, GRAVITI, SPEED_PLAYER, SPEED_PLAYER_Y, ATAKA_ZADERZHKA,
-    RYVOK_VREMYA, RYVOK_SPEED, PLASHIK_ZAMOROZKA,
+    RYVOK_VREMYA, RYVOK_SPEED, RYVOK_ZADERZHKA, PLASHIK_ZAMOROZKA,
+    JUMP_TIMER_MAX,
 )
 import pygame
 
@@ -97,17 +98,17 @@ def update_player_movement(state, keys, ground_y):
         state.otpuskal = False
         state.playermovey = -2
 
-    if state.timer != 0 and state.timer != -15 and keys[pygame.K_SPACE] == 1 and state.timer <= 15 and state.otpuskal == False and state.playermovey < 0.1:
+    if state.timer != 0 and state.timer != -JUMP_TIMER_MAX and keys[pygame.K_SPACE] == 1 and state.timer <= JUMP_TIMER_MAX and state.otpuskal == False and state.playermovey < 0.1:
         state.timer += 1
-        state.playermovey += 0.1
+        state.playermovey += 0.05
 
-    if state.timer > 15 and state.playery <= ground_y or keys[pygame.K_SPACE] != 1 and state.playery <= ground_y:
-        state.timer = -15
+    if state.timer > JUMP_TIMER_MAX and state.playery <= ground_y or keys[pygame.K_SPACE] != 1 and state.playery <= ground_y:
+        state.timer = -JUMP_TIMER_MAX
         state.playermovey = 1
         state.playermovey += 0.1
         state.otpuskal = True
 
-    if state.timer == -15 and state.playery >= ground_y:
+    if state.timer == -JUMP_TIMER_MAX and state.playery >= ground_y:
         state.playermovey = 0
         state.playery = ground_y
         state.timer = 0
@@ -150,13 +151,17 @@ def handle_events(state, keys):
             state.flagatak = 4
             state.atakazaderzhka = ATAKA_ZADERZHKA
 
-    # Рывок (Shift) — только после подбора плащика, по нажатию
-    shift = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+    # Рывок (Q) — только после подбора плащика, по нажатию
+    if state.ryvok_zaderzhka > 0:
+        state.ryvok_zaderzhka -= 1
+
+    q_nazhata = keys[pygame.K_q]
     if (
         state.plashik_podobran
         and state.plashik_zamorozka == 0
         and not state.ryvok
-        and shift
+        and state.ryvok_zaderzhka == 0
+        and q_nazhata
         and not state.shift_derzali
     ):
         direction = keys[pygame.K_d] - keys[pygame.K_a]
@@ -165,12 +170,13 @@ def handle_events(state, keys):
         state.ryvok = True
         state.ryvok_timer = RYVOK_VREMYA
         state.ryvok_dir = direction
+        state.ryvok_zaderzhka = RYVOK_ZADERZHKA
         state.lookdir = direction
         if direction == 1:
             state.player = state.images['playeridet1']
         else:
             state.player = state.images['playeridet2']
-    state.shift_derzali = shift
+    state.shift_derzali = q_nazhata
 
     if keys[pygame.K_e] and state.akumpower == 5:
         state.akumpower = 0

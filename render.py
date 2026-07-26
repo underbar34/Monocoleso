@@ -1,6 +1,6 @@
 # render.py
 import pygame
-from config import HEALTH_MAX
+from config import HEALTH_MAX, ATAKA_KADRY
 
 def render(screen, state, pls, ground_y):
     screen.fill([255, 255, 255])
@@ -26,18 +26,18 @@ def render(screen, state, pls, ground_y):
         giznx += 40
     
     # Отрисовка атаки
-    if state.flagatak == 1 and state.vrematakpl <= 5:
+    if state.flagatak == 1 and state.vrematakpl <= ATAKA_KADRY:
         atakax = state.playerx + 30
         screen.blit(state.images['playerataka1'], (atakax, state.playery - 10))
         state.vrematakpl += 1
-    elif state.flagatak == 2 and state.vrematakpl <= 5:
+    elif state.flagatak == 2 and state.vrematakpl <= ATAKA_KADRY:
         atakax = state.playerx - 30
         screen.blit(state.images['playerataka2'], (atakax, state.playery - 10))
         state.vrematakpl += 1
-    elif state.flagatak == 3 and state.vrematakpl <= 5:
+    elif state.flagatak == 3 and state.vrematakpl <= ATAKA_KADRY:
         screen.blit(state.images['playerataka3'], (state.playerx - 10, state.playery - 50))
         state.vrematakpl += 1
-    elif state.flagatak == 4 and state.vrematakpl <= 5:
+    elif state.flagatak == 4 and state.vrematakpl <= ATAKA_KADRY:
         screen.blit(state.images['playerataka4'], (state.playerx - 10, state.playery + 30))
         state.vrematakpl += 1
     else:
