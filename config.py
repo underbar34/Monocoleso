@@ -15,6 +15,7 @@ ATAKA_ZADERZHKA = FPS // 3
 RYVOK_VREMYA = int(FPS * 0.3)
 RYVOK_SPEED = 11
 RYVOK_ZADERZHKA = int(FPS * 0.5)
+RYVOK_V_VOZDUHE_MAX = 2
 
 # Плащик: заморозка после подбора (1.2 сек)
 PLASHIK_ZAMOROZKA = int(FPS * 1.2)
@@ -109,4 +110,5 @@ class GameState:
         self.ryvok_timer = 0
         self.ryvok_dir = 1
         self.ryvok_zaderzhka = 0
+        self.ryvok_vozduh = 0
         self.shift_derzali = False

@@ -2,7 +2,7 @@
 import pygame
 from config import HEALTH_MAX, ATAKA_KADRY
 
-def render(screen, state, pls, ground_y):
+def render(screen, state, pls, ground_y, blur):
     screen.fill([255, 255, 255])
     
     # Отрисовка платформ
@@ -13,7 +13,9 @@ def render(screen, state, pls, ground_y):
     if not state.plashik_podobran:
         screen.blit(state.images['plashik'], (state.plashikx, state.plashiky))
 
-    # Отрисовка игрока
+    # Motion blur + игрок
+    blur.update(state.playerx, state.playery, state.player, strong=state.ryvok)
+    blur.draw(screen)
     screen.blit(state.player, (state.playerx, state.playery))
     
     # Отрисовка здоровья

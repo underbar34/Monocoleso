@@ -1,8 +1,8 @@
 # logic.py
 from config import (
     GROUND_Y, GRAVITI, SPEED_PLAYER, SPEED_PLAYER_Y, ATAKA_ZADERZHKA,
-    RYVOK_VREMYA, RYVOK_SPEED, RYVOK_ZADERZHKA, PLASHIK_ZAMOROZKA,
-    JUMP_TIMER_MAX,
+    RYVOK_VREMYA, RYVOK_SPEED, RYVOK_ZADERZHKA, RYVOK_V_VOZDUHE_MAX,
+    PLASHIK_ZAMOROZKA, JUMP_TIMER_MAX,
 )
 import pygame
 
@@ -113,6 +113,7 @@ def update_player_movement(state, keys, ground_y):
         state.playery = ground_y
         state.timer = 0
         state.opuskatsa = 0
+        state.ryvok_vozduh = 0
 
     if state.playery < ground_y and state.playermovey == 0 and keys[pygame.K_SPACE] == 1:
         state.playermovey = 0.7
@@ -120,10 +121,14 @@ def update_player_movement(state, keys, ground_y):
     if state.playery > ground_y:
         state.playery = ground_y
         state.playermovey = 0
+        state.ryvok_vozduh = 0
+
+    if state.playery == ground_y and not state.ryvok:
+        state.ryvok_vozduh = 0
 
     state.playery += state.playermovey * SPEED_PLAYER_Y
 
-def handle_events(state, keys):
+def handle_events(state, keys, ground_y):
     zamorozhen = state.plashik_zamorozka > 0
 
     # Спуск с платформы
@@ -155,6 +160,7 @@ def handle_events(state, keys):
     if state.ryvok_zaderzhka > 0:
         state.ryvok_zaderzhka -= 1
 
+    v_vozduhe = state.playery < ground_y
     q_nazhata = keys[pygame.K_q]
     if (
         state.plashik_podobran
@@ -163,6 +169,7 @@ def handle_events(state, keys):
         and state.ryvok_zaderzhka == 0
         and q_nazhata
         and not state.shift_derzali
+        and (not v_vozduhe or state.ryvok_vozduh < RYVOK_V_VOZDUHE_MAX)
     ):
         direction = keys[pygame.K_d] - keys[pygame.K_a]
         if direction == 0:
@@ -172,6 +179,8 @@ def handle_events(state, keys):
         state.ryvok_dir = direction
         state.ryvok_zaderzhka = RYVOK_ZADERZHKA
         state.lookdir = direction
+        if v_vozduhe:
+            state.ryvok_vozduh += 1
         if direction == 1:
             state.player = state.images['playeridet1']
         else:

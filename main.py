@@ -5,6 +5,7 @@ from config import WIDTH, HEIGHT, FPS, load_images, GameState
 from platforms import create_platforms
 from logic import update_akum, get_ground_y, update_player_movement, handle_events, update_plashik
 from render import render
+from motion_blur import MotionBlur
 
 def main():
     pygame.init()
@@ -21,6 +22,9 @@ def main():
     
     # Создание платформ
     pls = create_platforms()
+
+    # Motion blur
+    blur = MotionBlur()
     
     # Контроль FPS
     clock = pygame.time.Clock()
@@ -46,13 +50,13 @@ def main():
         update_plashik(state)
         
         # Обработка событий клавиатуры
-        handle_events(state, keys)
+        handle_events(state, keys, ground_y)
         
         # Обновление движения игрока
         update_player_movement(state, keys, ground_y)
         
         # Отрисовка
-        render(screen, state, pls, ground_y)
+        render(screen, state, pls, ground_y, blur)
         
         # Контроль FPS
         clock.tick(FPS)
