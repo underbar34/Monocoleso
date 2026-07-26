@@ -8,6 +8,9 @@ HEIGHT = 800
 # FPS
 FPS = 30
 
+# Задержка атаки (1/3 секунды)
+ATAKA_ZADERZHKA = FPS // 3
+
 # Гравитация
 GRAVITI = 1.3
 
@@ -70,6 +73,7 @@ class GameState:
         self.atakapl = False
         self.flagatak = 0
         self.vrematakpl = 0
+        self.atakazaderzhka = 0
         self.atakax = -1000
         self.giznx = 100
         self.gizny = 2

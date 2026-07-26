@@ -1,5 +1,5 @@
 # logic.py
-from config import GROUND_Y, GRAVITI, SPEED_PLAYER, SPEED_PLAYER_Y
+from config import GROUND_Y, GRAVITI, SPEED_PLAYER, SPEED_PLAYER_Y, ATAKA_ZADERZHKA
 import pygame
 
 def update_akum(state):
@@ -83,19 +83,26 @@ def handle_events(state, keys):
     if keys[pygame.K_s] and state.otpuskal and state.playermovey == 0:
         state.playery += 40
     
-    if not state.atakapl:
+    if state.atakazaderzhka > 0:
+        state.atakazaderzhka -= 1
+    
+    if not state.atakapl and state.atakazaderzhka == 0:
         if keys[pygame.K_RIGHT]:
             state.atakapl = True
             state.flagatak = 1
+            state.atakazaderzhka = ATAKA_ZADERZHKA
         elif keys[pygame.K_LEFT]:
             state.atakapl = True
             state.flagatak = 2
+            state.atakazaderzhka = ATAKA_ZADERZHKA
         elif keys[pygame.K_UP]:
             state.atakapl = True
             state.flagatak = 3
+            state.atakazaderzhka = ATAKA_ZADERZHKA
         elif keys[pygame.K_DOWN]:
             state.atakapl = True
             state.flagatak = 4
+            state.atakazaderzhka = ATAKA_ZADERZHKA
     
     if keys[pygame.K_e] and state.akumpower == 5:
         state.akumpower = 0
