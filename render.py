@@ -29,18 +29,18 @@ def render(screen, state, pls, ground_y, blur):
     
     # Отрисовка атаки
     if state.flagatak == 1 and state.vrematakpl <= ATAKA_KADRY:
-        atakax = state.playerx + 30
-        screen.blit(state.images['playerataka1'], (atakax, state.playery - 10))
+        atakax = state.playerx + 17
+        screen.blit(state.images['playerataka1'], (atakax, state.playery))
         state.vrematakpl += 1
     elif state.flagatak == 2 and state.vrematakpl <= ATAKA_KADRY:
-        atakax = state.playerx - 30
-        screen.blit(state.images['playerataka2'], (atakax, state.playery - 10))
+        atakax = state.playerx - 78
+        screen.blit(state.images['playerataka2'], (atakax, state.playery))
         state.vrematakpl += 1
     elif state.flagatak == 3 and state.vrematakpl <= ATAKA_KADRY:
-        screen.blit(state.images['playerataka3'], (state.playerx - 10, state.playery - 50))
+        screen.blit(state.images['playerataka3'], (state.playerx + 8, state.playery - 90))
         state.vrematakpl += 1
     elif state.flagatak == 4 and state.vrematakpl <= ATAKA_KADRY:
-        screen.blit(state.images['playerataka4'], (state.playerx - 10, state.playery + 30))
+        screen.blit(state.images['playerataka4'], (state.playerx + 8, state.playery + 5))
         state.vrematakpl += 1
     else:
         state.atakapl = False
