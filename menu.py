@@ -3,27 +3,60 @@ import sys
 import pygame
 from config import WIDTH, HEIGHT, FPS
 
-BTN_LARGE_W = 420
-BTN_LARGE_H = 72
+MENU_ASSETS = "Assets/menuelements"
+
+BTN_LARGE_W = 344
+BTN_LARGE_H = 86
 BTN_GAP = 20
 LOGO_GAP = 45
 BTN_SMALL_W = (BTN_LARGE_W - BTN_GAP) // 2
-BTN_SMALL_H = BTN_LARGE_H
+BTN_SMALL_H = BTN_LARGE_H * BTN_SMALL_W // BTN_LARGE_W
+BTN_ANIM_SPEED = 12
 
-COLOR_BG = (255, 255, 255)
-COLOR_BTN = (45, 55, 85)
-COLOR_BTN_HOVER = (65, 80, 120)
 COLOR_BTN_TEXT = (255, 255, 255)
-COLOR_TITLE = (30, 35, 55)
-COLOR_SUBTITLE = (80, 90, 110)
+COLOR_TITLE = (255, 255, 255)
+COLOR_SUBTITLE = (220, 220, 220)
+
+_menu_assets = None
 
 
-class Button:
-    def __init__(self, rect, text, font):
+def _load_menu_assets():
+    global _menu_assets
+    if _menu_assets is not None:
+        return _menu_assets
+
+    btn1 = pygame.image.load(f"{MENU_ASSETS}/knopka1.png")
+    btn2 = pygame.image.load(f"{MENU_ASSETS}/knopka2.png")
+    _menu_assets = {
+        "background": pygame.image.load(f"{MENU_ASSETS}/menubagground.png"),
+        "btn_frames": [btn1, btn2],
+    }
+    return _menu_assets
+
+
+def _scale_frames(frames, size):
+    return [pygame.transform.scale(frame, size) for frame in frames]
+
+
+def _make_font(size, bold=False):
+    return pygame.font.SysFont("dejavusans", size, bold=bold)
+
+
+class AnimatedButton:
+    def __init__(self, rect, text, font, frames, anim_speed=BTN_ANIM_SPEED):
         self.rect = pygame.Rect(rect)
         self.text = text
         self.font = font
+        self.frames = frames
+        self.anim_speed = anim_speed
+        self.anim_timer = 0
+        self.frame_index = 0
         self.hovered = False
+
+    @classmethod
+    def create(cls, rect, text, font, raw_frames, anim_speed=BTN_ANIM_SPEED):
+        size = (pygame.Rect(rect).width, pygame.Rect(rect).height)
+        return cls(rect, text, font, _scale_frames(raw_frames, size), anim_speed)
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEMOTION:
@@ -33,40 +66,31 @@ class Button:
                 return True
         return False
 
+    def update(self):
+        self.anim_timer += 1
+        if self.anim_timer >= self.anim_speed:
+            self.anim_timer = 0
+            self.frame_index = (self.frame_index + 1) % len(self.frames)
+
     def draw(self, surface):
-        color = COLOR_BTN_HOVER if self.hovered else COLOR_BTN
-        pygame.draw.rect(surface, color, self.rect, border_radius=8)
-        pygame.draw.rect(surface, COLOR_TITLE, self.rect, width=2, border_radius=8)
+        surface.blit(self.frames[self.frame_index], self.rect)
         label = self.font.render(self.text, True, COLOR_BTN_TEXT)
         surface.blit(label, label.get_rect(center=self.rect.center))
 
 
-def _load_logo():
-    logo = pygame.image.load("Assets/akum/akum5.png")
-    scale = 2
-    size = (logo.get_width() * scale, logo.get_height() * scale)
-    return pygame.transform.scale(logo, size)
-
-
-def _make_font(size, bold=False):
-    return pygame.font.SysFont("dejavusans", size, bold=bold)
-
-
-def _build_layout(title_font):
-    logo = _load_logo()
+def _build_layout(assets, title_font):
     title_surf = title_font.render("Monocoleso", True, COLOR_TITLE)
     btn_font = _make_font(32, bold=True)
-    btn_font_small = _make_font(26, bold=True)
+    btn_font_small = _make_font(22, bold=True)
+    raw_frames = assets["btn_frames"]
 
-    logo_h = logo.get_height()
     title_h = title_surf.get_height()
-    block_h = logo_h + 12 + title_h + LOGO_GAP + BTN_LARGE_H + BTN_GAP + BTN_SMALL_H
+    block_h = title_h + LOGO_GAP + BTN_LARGE_H + BTN_GAP + BTN_SMALL_H
 
     top_y = (HEIGHT - block_h) // 2
     center_x = WIDTH // 2
 
-    logo_rect = logo.get_rect(midtop=(center_x, top_y))
-    title_rect = title_surf.get_rect(midtop=(center_x, logo_rect.bottom + 12))
+    title_rect = title_surf.get_rect(midtop=(center_x, top_y))
 
     play_y = title_rect.bottom + LOGO_GAP
     play_rect = pygame.Rect(0, play_y, BTN_LARGE_W, BTN_LARGE_H)
@@ -79,35 +103,35 @@ def _build_layout(title_font):
     exit_rect.left = center_x + BTN_GAP // 2
 
     return {
-        "logo": logo,
-        "logo_rect": logo_rect,
+        "background": assets["background"],
         "title": title_surf,
         "title_rect": title_rect,
-        "play": Button(play_rect, "Играть", btn_font),
-        "authors": Button(authors_rect, "Авторы", btn_font_small),
-        "exit": Button(exit_rect, "Выйти", btn_font_small),
+        "play": AnimatedButton.create(play_rect, "Играть", btn_font, raw_frames),
+        "authors": AnimatedButton.create(authors_rect, "Авторы", btn_font_small, raw_frames),
+        "exit": AnimatedButton.create(exit_rect, "Выйти", btn_font_small, raw_frames),
     }
 
 
 def _draw_menu(screen, layout):
-    screen.fill(COLOR_BG)
-    screen.blit(layout["logo"], layout["logo_rect"])
+    screen.blit(layout["background"], (0, 0))
     screen.blit(layout["title"], layout["title_rect"])
-    layout["play"].draw(screen)
-    layout["authors"].draw(screen)
-    layout["exit"].draw(screen)
+
+    for key in ("play", "authors", "exit"):
+        layout[key].update()
+        layout[key].draw(screen)
+
     pygame.display.flip()
 
 
-def _run_authors_screen(screen, clock):
+def _run_authors_screen(screen, clock, assets):
     title_font = _make_font(48, bold=True)
     body_font = _make_font(28)
     hint_font = _make_font(22)
-    back_font = _make_font(26, bold=True)
+    back_font = _make_font(22, bold=True)
 
-    back_rect = pygame.Rect(0, HEIGHT - 100, 200, BTN_SMALL_H)
+    back_rect = pygame.Rect(0, HEIGHT - 100, BTN_SMALL_W, BTN_SMALL_H)
     back_rect.centerx = WIDTH // 2
-    back_btn = Button(back_rect, "Назад", back_font)
+    back_btn = AnimatedButton.create(back_rect, "Назад", back_font, assets["btn_frames"])
 
     lines = [
         "Monocoleso",
@@ -124,7 +148,8 @@ def _run_authors_screen(screen, clock):
             if back_btn.handle_event(event):
                 return
 
-        screen.fill(COLOR_BG)
+        screen.blit(assets["background"], (0, 0))
+
         title = title_font.render("Авторы", True, COLOR_TITLE)
         screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 3)))
 
@@ -139,6 +164,7 @@ def _run_authors_screen(screen, clock):
         screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 160)))
 
         back_btn.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=pygame.mouse.get_pos()))
+        back_btn.update()
         back_btn.draw(screen)
         pygame.display.flip()
         clock.tick(FPS)
@@ -146,8 +172,9 @@ def _run_authors_screen(screen, clock):
 
 def run_menu(screen, clock):
     """Показывает главное меню. Возвращает 'play' при нажатии «Играть»."""
+    assets = _load_menu_assets()
     title_font = _make_font(56, bold=True)
-    layout = _build_layout(title_font)
+    layout = _build_layout(assets, title_font)
 
     while True:
         for event in pygame.event.get():
@@ -157,8 +184,8 @@ def run_menu(screen, clock):
             if layout["play"].handle_event(event):
                 return "play"
             if layout["authors"].handle_event(event):
-                _run_authors_screen(screen, clock)
-                layout = _build_layout(title_font)
+                _run_authors_screen(screen, clock, assets)
+                layout = _build_layout(assets, title_font)
             if layout["exit"].handle_event(event):
                 pygame.quit()
                 sys.exit()
