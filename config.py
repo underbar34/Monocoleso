@@ -27,6 +27,11 @@ PLAYER_ACCEL = 1.0
 PLAYER_FRICTION = 0.78
 SPRINT_MULT = 2.0
 
+# Рывок (dash)
+DASH_DURATION = int(FPS * 0.3)   # 0.3 секунды
+DASH_SPEED = 22.0
+DASH_COOLDOWN = int(FPS * 0.85)
+
 # Отбрасывание при попадании по боссу
 KNOCKBACK_SIDE = 6.5
 KNOCKBACK_VERTICAL = 3.0
@@ -114,6 +119,10 @@ def load_images():
     sprint_skill.fill((156, 39, 176))
     images['sprint_skill'] = sprint_skill
 
+    dash_skill = pygame.Surface((28, 28))
+    dash_skill.fill((255, 87, 34))
+    images['dash_skill'] = dash_skill
+
     coin = pygame.Surface((20, 20), pygame.SRCALPHA)
     pygame.draw.circle(coin, (255, 215, 0), (10, 10), 10)
     pygame.draw.circle(coin, (255, 180, 0), (10, 10), 7)
@@ -161,7 +170,7 @@ class GameState:
         self.images = images
         self.lookdir = 1
 
-        # Пикапы с уровня (extra_life / sprint_skill)
+        # Пикапы с уровня (extra_life / ability)
         self.level_pickups = []
 
         # Совместимость со старым кодом доп. жизни
@@ -169,13 +178,18 @@ class GameState:
         self.extra_lifex = -9999
         self.extra_lifey = -9999
 
-        # Абилка спринта (выпадает с босса + можно поставить в редакторе)
+        # Абилки (спринт / рывок; спринт также падает с босса)
         self.sprint_unlocked = False
         self.sprint_podobran = False
         self.sprint_pickup = None
+        self.dash_unlocked = False
+        self.dash_timer = 0
+        self.dash_cooldown = 0
+        self.dash_dir = 1
 
         # Босс
         self.boss_alive = False
+        self.boss_id = "holodos"
         self.boss_x = BOSS_X
         self.boss_y = BOSS_Y
         self.boss_arena_x = BOSS_ARENA_X
@@ -226,6 +240,7 @@ class GameState:
             t = obj.get("type")
             if t == "boss":
                 self.boss_alive = True
+                self.boss_id = obj.get("id", "holodos")
                 self.boss_x = obj.get("x", BOSS_X)
                 self.boss_y = obj.get("y", BOSS_Y)
                 self.boss_arena_x = obj.get("arena_x", BOSS_ARENA_X)
@@ -235,9 +250,19 @@ class GameState:
                 self.boss_phase = 1
                 self.boss_dying = False
                 self.loot_spawned = False
-            elif t in ("extra_life", "sprint_skill"):
+                if hasattr(self, "_boss_base_y"):
+                    del self._boss_base_y
+            elif t == "ability":
                 self.level_pickups.append({
-                    "type": t,
+                    "type": "ability",
+                    "id": obj.get("id", "sprint"),
+                    "x": obj["x"],
+                    "y": obj["y"],
+                    "collected": False,
+                })
+            elif t == "extra_life":
+                self.level_pickups.append({
+                    "type": "extra_life",
                     "x": obj["x"],
                     "y": obj["y"],
                     "collected": False,
@@ -257,7 +282,6 @@ class GameState:
                     "target_y": obj.get("target_y", obj["y"]),
                 })
 
-        # Старый одиночный extra_life — если в уровне нет пикапов этого типа
         lives = [p for p in self.level_pickups if p["type"] == "extra_life"]
         if lives:
             self.extra_life_podobran = False

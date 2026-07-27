@@ -24,18 +24,21 @@ import pygame
 from config import WIDTH, HEIGHT, FPS, load_images
 from level_loader import (
     DEFAULT_LEVEL_PATH,
-    OBJECT_TYPES,
+    TOOL_CATEGORIES,
     OBJECT_COLORS,
     OBJECT_LABELS,
+    BOSS_CATALOG,
+    ABILITY_CATALOG,
     default_object,
     load_level,
     save_level,
+    ability_label,
+    boss_label,
 )
 
-# Инструменты палитры (порядок = горячие клавиши 1–7)
-TOOLS = ("platform", "player_spawn") + OBJECT_TYPES
+TOOLS = TOOL_CATEGORIES
 
-PANEL_W = 260
+PANEL_W = 280
 SNAP = 5
 HIT_PAD = 18
 NPC_W, NPC_H = 36, 50
@@ -51,6 +54,24 @@ def _make_font(size, bold=False):
     return pygame.font.SysFont("dejavusans", size, bold=bold)
 
 
+def _is_ability_obj(obj):
+    return obj.get("type") in ("ability", "sprint_skill", "dash_skill")
+
+
+def _is_boss_obj(obj):
+    return obj.get("type") == "boss"
+
+
+def _ability_id(obj):
+    if obj.get("type") == "ability":
+        return obj.get("id", "sprint")
+    if obj.get("type") == "sprint_skill":
+        return "sprint"
+    if obj.get("type") == "dash_skill":
+        return "dash"
+    return "sprint"
+
+
 class LevelEditor:
     def __init__(self, path):
         pygame.init()
@@ -63,7 +84,9 @@ class LevelEditor:
 
         self.cam_x = 0
         self.tool = "platform"
-        self.selected = None  # ("platform", idx) | ("object", idx) | ("spawn", None)
+        self.boss_variant = next(iter(BOSS_CATALOG))
+        self.ability_variant = next(iter(ABILITY_CATALOG))
+        self.selected = None
         self.dragging = False
         self.drag_ox = 0
         self.drag_oy = 0
@@ -75,58 +98,53 @@ class LevelEditor:
         self.font_sm = _make_font(13)
         self.font_bold = _make_font(18, bold=True)
 
-        # Режим ввода текста для диалога NPC
         self.text_mode = False
         self.text_buffer = ""
         self.text_line_idx = 0
 
-    # --- координаты ---
+        self.tool_rects = []
+        self.variant_rects = []
+
     def world_pos(self, mx, my):
         return mx + self.cam_x, my
 
     def screen_x(self, wx):
         return wx - self.cam_x
 
-    # --- статус ---
     def set_status(self, msg, frames=180):
         self.status = msg
         self.status_timer = frames
 
-    # --- hit-test ---
     def hit_at(self, wx, wy):
-        # NPC
         for i, obj in enumerate(self.level["objects"]):
             if obj["type"] == "npc":
                 r = pygame.Rect(obj["x"], obj["y"], NPC_W, NPC_H)
                 if r.collidepoint(wx, wy):
                     return ("object", i)
-        # boss
         for i, obj in enumerate(self.level["objects"]):
-            if obj["type"] == "boss":
-                img = self.images.get("holodos1")
+            if _is_boss_obj(obj):
+                bid = obj.get("id", "holodos")
+                sprite = BOSS_CATALOG.get(bid, {}).get("sprite", "holodos1")
+                img = self.images.get(sprite) or self.images.get("holodos1")
                 w = img.get_width() if img else 200
                 h = img.get_height() if img else 400
                 r = pygame.Rect(obj["x"], obj["y"], w, h)
                 if r.inflate(HIT_PAD, HIT_PAD).collidepoint(wx, wy):
                     return ("object", i)
-        # teleports
         for i, obj in enumerate(self.level["objects"]):
             if obj["type"] == "teleport":
                 cx, cy = obj["x"] + TELEPORT_R, obj["y"] + TELEPORT_R
                 if (wx - cx) ** 2 + (wy - cy) ** 2 <= (TELEPORT_R + 8) ** 2:
                     return ("object", i)
-        # pickups
         for i, obj in enumerate(self.level["objects"]):
-            if obj["type"] in ("extra_life", "sprint_skill"):
+            if _is_ability_obj(obj) or obj["type"] == "extra_life":
                 r = pygame.Rect(obj["x"], obj["y"], PICKUP_SIZE, PICKUP_SIZE)
                 if r.inflate(HIT_PAD, HIT_PAD).collidepoint(wx, wy):
                     return ("object", i)
-        # spawn
         sp = self.level["player_spawn"]
         r = pygame.Rect(sp["x"], sp["y"], 40, 50)
         if r.inflate(HIT_PAD, HIT_PAD).collidepoint(wx, wy):
             return ("spawn", None)
-        # platforms (сверху вниз — последняя в списке приоритетнее)
         for i in range(len(self.level["platforms"]) - 1, -1, -1):
             p = self.level["platforms"][i]
             r = pygame.Rect(p["x"], p["y"], 105, 20)
@@ -141,7 +159,6 @@ class LevelEditor:
                 return self.level["objects"][idx]
         return None
 
-    # --- действия ---
     def place_at(self, wx, wy):
         wx, wy = _snap(wx), _snap(wy)
         if self.tool == "platform":
@@ -155,14 +172,20 @@ class LevelEditor:
             self.set_status(f"Спавн @ ({int(wx)}, {int(wy)})")
             return
         if self.tool == "boss":
-            # один босс на уровень — заменяем
             self.level["objects"] = [
                 o for o in self.level["objects"] if o.get("type") != "boss"
             ]
-        obj = default_object(self.tool, int(wx), int(wy))
+            obj = default_object("boss", int(wx), int(wy), self.boss_variant)
+            label = boss_label(self.boss_variant)
+        elif self.tool == "ability":
+            obj = default_object("ability", int(wx), int(wy), self.ability_variant)
+            label = ability_label(self.ability_variant)
+        else:
+            obj = default_object(self.tool, int(wx), int(wy))
+            label = OBJECT_LABELS.get(self.tool, self.tool)
         self.level["objects"].append(obj)
         self.selected = ("object", len(self.level["objects"]) - 1)
-        self.set_status(f"{OBJECT_LABELS[self.tool]} @ ({int(wx)}, {int(wy)})")
+        self.set_status(f"{label} @ ({int(wx)}, {int(wy)})")
 
     def delete_selected(self):
         if not self.selected:
@@ -172,7 +195,13 @@ class LevelEditor:
             del self.level["platforms"][idx]
             self.set_status("Платформа удалена")
         elif kind == "object" and 0 <= idx < len(self.level["objects"]):
-            name = OBJECT_LABELS.get(self.level["objects"][idx]["type"], "?")
+            obj = self.level["objects"][idx]
+            if _is_ability_obj(obj):
+                name = ability_label(_ability_id(obj))
+            elif _is_boss_obj(obj):
+                name = boss_label(obj.get("id", "holodos"))
+            else:
+                name = OBJECT_LABELS.get(obj["type"], "?")
             del self.level["objects"][idx]
             self.set_status(f"{name} удалён")
         elif kind == "spawn":
@@ -256,7 +285,6 @@ class LevelEditor:
         if self.text_buffer:
             dialog[self.text_line_idx] = self.text_buffer
         else:
-            # пустая строка — удаляем хвост
             if self.text_line_idx < len(dialog):
                 dialog[self.text_line_idx] = ""
         dialog[:] = [line for line in dialog if line.strip()]
@@ -283,13 +311,11 @@ class LevelEditor:
         self.selected = None
         self.set_status(f"Перезагружено ← {self.path}")
 
-    # --- отрисовка ---
     def draw_world(self):
         self.screen.fill((245, 248, 252))
         world_w = self.level.get("world_width", 6200)
         ground_y = self.level.get("ground_y", 726)
 
-        # сетка
         start = int(self.cam_x // 105) * 105
         for x in range(start, int(self.cam_x + WIDTH - PANEL_W) + 105, 105):
             sx = self.screen_x(x)
@@ -297,16 +323,13 @@ class LevelEditor:
         for y in range(0, HEIGHT, 85):
             pygame.draw.line(self.screen, (230, 235, 240), (0, y), (WIDTH - PANEL_W, y))
 
-        # земля
-        gy = ground_y
         pygame.draw.line(
             self.screen, (180, 180, 180),
-            (0, gy), (WIDTH - PANEL_W, gy), 2,
+            (0, ground_y), (WIDTH - PANEL_W, ground_y), 2,
         )
         tip = self.font_sm.render(f"ground_y={ground_y}  world={world_w}", True, (150, 150, 150))
-        self.screen.blit(tip, (8, gy + 6))
+        self.screen.blit(tip, (8, ground_y + 6))
 
-        # платформы
         plat_img = self.images["platform"]
         for i, p in enumerate(self.level["platforms"]):
             sx, sy = self.screen_x(p["x"]), p["y"]
@@ -314,11 +337,9 @@ class LevelEditor:
             if self.selected == ("platform", i):
                 pygame.draw.rect(self.screen, (255, 80, 80), (sx - 2, sy - 2, 109, 24), 2)
 
-        # объекты
         for i, obj in enumerate(self.level["objects"]):
             self._draw_object(obj, i)
 
-        # спавн
         sp = self.level["player_spawn"]
         sx, sy = self.screen_x(sp["x"]), sp["y"]
         self.screen.blit(self.images["playerstoit1"], (sx, sy))
@@ -331,12 +352,14 @@ class LevelEditor:
         t = obj["type"]
         sx, sy = self.screen_x(obj["x"]), obj["y"]
         selected = self.selected == ("object", idx)
-        color = OBJECT_COLORS.get(t, (100, 100, 100))
 
-        if t == "boss":
-            img = self.images["holodos1"]
+        if _is_boss_obj(obj):
+            bid = obj.get("id", "holodos")
+            meta = BOSS_CATALOG.get(bid, {})
+            sprite = meta.get("sprite", "holodos1")
+            img = self.images.get(sprite) or self.images["holodos1"]
+            color = meta.get("color", OBJECT_COLORS["boss"])
             self.screen.blit(img, (sx, sy))
-            # зона арены
             arena = obj.get("arena_x", obj["x"] - 1300)
             ax = self.screen_x(arena)
             pygame.draw.line(self.screen, (255, 100, 100), (ax, 0), (ax, HEIGHT), 1)
@@ -347,12 +370,25 @@ class LevelEditor:
                     self.screen, (255, 80, 80),
                     (sx - 2, sy - 2, img.get_width() + 4, img.get_height() + 4), 2,
                 )
-        elif t == "extra_life":
-            self.screen.blit(self.images["extra_life"], (sx, sy))
+            tag = self.font_sm.render(boss_label(bid), True, color)
+            self.screen.blit(tag, (sx, sy - 14))
+            return
+
+        if _is_ability_obj(obj):
+            aid = _ability_id(obj)
+            meta = ABILITY_CATALOG.get(aid, {})
+            img_key = meta.get("image", "sprint_skill")
+            color = meta.get("color", OBJECT_COLORS["ability"])
+            self.screen.blit(self.images[img_key], (sx, sy))
             if selected:
                 pygame.draw.rect(self.screen, (255, 80, 80), (sx - 2, sy - 2, 32, 32), 2)
-        elif t == "sprint_skill":
-            self.screen.blit(self.images["sprint_skill"], (sx, sy))
+            tag = self.font_sm.render(ability_label(aid), True, color)
+            self.screen.blit(tag, (sx, sy - 14))
+            return
+
+        color = OBJECT_COLORS.get(t, (100, 100, 100))
+        if t == "extra_life":
+            self.screen.blit(self.images["extra_life"], (sx, sy))
             if selected:
                 pygame.draw.rect(self.screen, (255, 80, 80), (sx - 2, sy - 2, 32, 32), 2)
         elif t == "teleport":
@@ -371,7 +407,6 @@ class LevelEditor:
             body = pygame.Rect(sx, sy, NPC_W, NPC_H)
             pygame.draw.rect(self.screen, color, body)
             pygame.draw.rect(self.screen, (60, 40, 0), body, 2)
-            # голова
             pygame.draw.circle(self.screen, (255, 220, 180), (sx + NPC_W // 2, sy + 10), 10)
             name = obj.get("name", "NPC")
             label = self.font_sm.render(name, True, (40, 40, 40))
@@ -394,7 +429,7 @@ class LevelEditor:
 
         self.tool_rects = []
         for i, tool in enumerate(TOOLS):
-            rect = pygame.Rect(WIDTH - PANEL_W + 12, y, PANEL_W - 24, 32)
+            rect = pygame.Rect(WIDTH - PANEL_W + 12, y, PANEL_W - 24, 30)
             self.tool_rects.append((rect, tool))
             active = tool == self.tool
             bg = OBJECT_COLORS.get(tool, (90, 90, 90)) if active else (55, 60, 70)
@@ -402,38 +437,67 @@ class LevelEditor:
             if active:
                 pygame.draw.rect(self.screen, (255, 255, 255), rect, 2, border_radius=4)
             text = self.font.render(f"{i + 1}. {OBJECT_LABELS.get(tool, tool)}", True, (255, 255, 255))
-            self.screen.blit(text, (rect.x + 8, rect.y + 6))
-            y += 38
+            self.screen.blit(text, (rect.x + 8, rect.y + 5))
+            y += 34
 
-        y += 10
+        # Подменю вариантов для боссов / абилок
+        self.variant_rects = []
+        if self.tool in ("boss", "ability"):
+            y += 6
+            catalog = BOSS_CATALOG if self.tool == "boss" else ABILITY_CATALOG
+            current = self.boss_variant if self.tool == "boss" else self.ability_variant
+            sub = self.font_bold.render(
+                "Выбор босса" if self.tool == "boss" else "Выбор абилки",
+                True, (255, 255, 255),
+            )
+            self.screen.blit(sub, (WIDTH - PANEL_W + 14, y))
+            y += 24
+            for vid, meta in catalog.items():
+                rect = pygame.Rect(WIDTH - PANEL_W + 20, y, PANEL_W - 40, 28)
+                self.variant_rects.append((rect, vid))
+                active = vid == current
+                bg = meta["color"] if active else (50, 55, 65)
+                pygame.draw.rect(self.screen, bg, rect, border_radius=4)
+                if active:
+                    pygame.draw.rect(self.screen, (255, 255, 255), rect, 2, border_radius=4)
+                # иконка
+                if self.tool == "ability":
+                    img = self.images.get(meta.get("image", "sprint_skill"))
+                    if img:
+                        self.screen.blit(img, (rect.x + 4, rect.y + 0))
+                    label = f"{meta['label']}  [{meta.get('key_hint', '')}]"
+                    self.screen.blit(self.font_sm.render(label, True, (255, 255, 255)), (rect.x + 36, rect.y + 6))
+                else:
+                    self.screen.blit(self.font_sm.render(meta["label"], True, (255, 255, 255)), (rect.x + 10, rect.y + 6))
+                y += 32
+
+        y += 8
         help_lines = [
             "ЛКМ — поставить/тащить",
             "ПКМ — удалить",
             "T — цель телепорта",
             "Enter — диалог NPC",
             "Ctrl+S — сохранить",
-            "Ctrl+O — перезагрузить",
             "Del — удалить выделение",
         ]
         htitle = self.font_bold.render("Управление", True, (255, 255, 255))
         self.screen.blit(htitle, (WIDTH - PANEL_W + 14, y))
-        y += 26
+        y += 24
         for line in help_lines:
             self.screen.blit(self.font_sm.render(line, True, (200, 205, 215)), (WIDTH - PANEL_W + 14, y))
-            y += 18
+            y += 17
 
-        # свойства выделения
-        y += 16
+        y += 12
         stitle = self.font_bold.render("Свойства", True, (255, 255, 255))
         self.screen.blit(stitle, (WIDTH - PANEL_W + 14, y))
-        y += 26
+        y += 24
         for line in self._props_lines():
             self.screen.blit(self.font_sm.render(line, True, (220, 220, 230)), (WIDTH - PANEL_W + 14, y))
-            y += 17
+            y += 16
 
         if self.text_mode:
             y += 10
-            box = pygame.Rect(WIDTH - PANEL_W + 10, y, PANEL_W - 20, 70)
+            box = pygame.Rect(WIDTH - PANEL_W + 10, min(y, HEIGHT - 90), PANEL_W - 20, 70)
             pygame.draw.rect(self.screen, (20, 24, 30), box, border_radius=4)
             pygame.draw.rect(self.screen, (0, 188, 212), box, 2, border_radius=4)
             prompt = self.font_sm.render(f"Строка {self.text_line_idx + 1}:", True, (0, 188, 212))
@@ -441,15 +505,13 @@ class LevelEditor:
             shown = self.text_buffer[-28:] + "_"
             self.screen.blit(self.font_sm.render(shown, True, (255, 255, 255)), (box.x + 6, box.y + 28))
 
-        # статус
         if self.status_timer > 0:
             self.status_timer -= 1
             bar = pygame.Rect(WIDTH - PANEL_W + 8, HEIGHT - 40, PANEL_W - 16, 28)
             pygame.draw.rect(self.screen, (20, 60, 40), bar, border_radius=4)
-            msg = self.font_sm.render(self.status[:40], True, (180, 255, 200))
+            msg = self.font_sm.render(self.status[:42], True, (180, 255, 200))
             self.screen.blit(msg, (bar.x + 6, bar.y + 6))
 
-        # курсор-мир
         mx, my = pygame.mouse.get_pos()
         if mx < WIDTH - PANEL_W:
             wx, wy = self.world_pos(mx, my)
@@ -458,6 +520,10 @@ class LevelEditor:
 
     def _props_lines(self):
         if not self.selected:
+            if self.tool == "boss":
+                return [f"Ставится: {boss_label(self.boss_variant)}"]
+            if self.tool == "ability":
+                return [f"Ставится: {ability_label(self.ability_variant)}"]
             return ["(нет выделения)"]
         kind, idx = self.selected
         if kind == "spawn":
@@ -467,17 +533,26 @@ class LevelEditor:
             p = self.level["platforms"][idx]
             return [f"Платформа #{idx}", f"x={p['x']} y={p['y']}"]
         obj = self.level["objects"][idx]
+        if _is_boss_obj(obj):
+            return [
+                f"Босс: {boss_label(obj.get('id', 'holodos'))}",
+                f"x={obj['x']} y={obj['y']}",
+                f"arena_x={obj.get('arena_x')}",
+                f"min_x={obj.get('min_x')} max_x={obj.get('max_x')}",
+            ]
+        if _is_ability_obj(obj):
+            aid = _ability_id(obj)
+            meta = ABILITY_CATALOG.get(aid, {})
+            return [
+                f"Абилка: {ability_label(aid)}",
+                f"клавиша: {meta.get('key_hint', '?')}",
+                f"x={obj['x']} y={obj['y']}",
+            ]
         lines = [
             f"{OBJECT_LABELS.get(obj['type'], obj['type'])}",
             f"x={obj['x']} y={obj['y']}",
         ]
-        if obj["type"] == "boss":
-            lines += [
-                f"arena_x={obj.get('arena_x')}",
-                f"min_x={obj.get('min_x')}",
-                f"max_x={obj.get('max_x')}",
-            ]
-        elif obj["type"] == "teleport":
+        if obj["type"] == "teleport":
             lines += [
                 f"→ ({obj.get('target_x')}, {obj.get('target_y')})",
                 "T + клик = новая цель",
@@ -486,14 +561,11 @@ class LevelEditor:
             lines.append(f"name={obj.get('name', 'NPC')}")
             dialog = obj.get("dialog", [])
             lines.append(f"строк диалога: {len(dialog)}")
-            for i, d in enumerate(dialog[:4]):
-                lines.append(f"  {i + 1}. {d[:28]}")
-            if len(dialog) > 4:
-                lines.append("  ...")
+            for i, d in enumerate(dialog[:3]):
+                lines.append(f"  {i + 1}. {d[:26]}")
             lines.append("Enter — править диалог")
         return lines
 
-    # --- события ---
     def handle_event(self, event):
         if self.text_mode:
             self._handle_text_event(event)
@@ -530,7 +602,6 @@ class LevelEditor:
             if event.key == pygame.K_RETURN:
                 self.begin_dialog_edit()
                 return True
-            # горячие клавиши инструментов
             if pygame.K_1 <= event.key <= pygame.K_7:
                 idx = event.key - pygame.K_1
                 if idx < len(TOOLS):
@@ -545,6 +616,16 @@ class LevelEditor:
                     if rect.collidepoint(mx, my):
                         self.tool = tool
                         self.set_status(f"Инструмент: {OBJECT_LABELS.get(tool, tool)}")
+                        return True
+                for rect, vid in self.variant_rects:
+                    if rect.collidepoint(mx, my):
+                        if self.tool == "boss":
+                            self.boss_variant = vid
+                            self.set_status(f"Босс: {boss_label(vid)}")
+                        else:
+                            self.ability_variant = vid
+                            self.set_status(f"Абилка: {ability_label(vid)}")
+                        return True
                 return True
             wx, wy = self.world_pos(mx, my)
             if event.button == 3:
@@ -601,8 +682,6 @@ class LevelEditor:
             dx -= speed
         if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
             dx += speed
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            pass  # мир горизонтальный — вертикаль фиксирована
         world_w = self.level.get("world_width", 6200)
         self.cam_x = max(0, min(self.cam_x + dx, max(0, world_w - (WIDTH - PANEL_W))))
 

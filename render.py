@@ -137,7 +137,15 @@ def render(screen, state, pls, ground_y, blur):
     for pickup in state.level_pickups:
         if pickup["collected"]:
             continue
-        key = "extra_life" if pickup["type"] == "extra_life" else "sprint_skill"
+        if pickup["type"] == "ability":
+            aid = pickup.get("id", "sprint")
+            key = "dash_skill" if aid == "dash" else "sprint_skill"
+        elif pickup["type"] == "dash_skill":
+            key = "dash_skill"
+        elif pickup["type"] == "sprint_skill":
+            key = "sprint_skill"
+        else:
+            key = "extra_life"
         screen.blit(state.images[key], (pickup["x"] - cam_x, pickup["y"]))
 
     if state.boss_alive or state.boss_dying:

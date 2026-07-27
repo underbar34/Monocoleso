@@ -12,6 +12,7 @@ from config import (
     KNOCKBACK_SIDE, KNOCKBACK_VERTICAL, KNOCKBACK_UP, KNOCKBACK_UP_MULT,
     KNOCKBACK_BLEND, KNOCKBACK_DECAY, KNOCKBACK_RISE_MAX,
     PLAYER_ACCEL, PLAYER_FRICTION, SPRINT_MULT,
+    DASH_DURATION, DASH_SPEED, DASH_COOLDOWN,
 )
 
 
@@ -404,26 +405,57 @@ def _collect_pickup(state, pickup):
     if pickup["type"] == "extra_life":
         if state.health < HEALTH_MAX:
             state.health += 1
-        # синхронизация старого флага
         remaining = [
             p for p in state.level_pickups
             if p["type"] == "extra_life" and not p["collected"] and p is not pickup
         ]
         if not remaining:
             state.extra_life_podobran = True
+    elif pickup["type"] == "ability":
+        aid = pickup.get("id", "sprint")
+        if aid == "sprint":
+            state.sprint_podobran = True
+            state.sprint_unlocked = True
+        elif aid == "dash":
+            state.dash_unlocked = True
     elif pickup["type"] == "sprint_skill":
         state.sprint_podobran = True
         state.sprint_unlocked = True
+    elif pickup["type"] == "dash_skill":
+        state.dash_unlocked = True
 
 
 def update_extra_life(state):
-    """Подбор пикапов, размещённых в уровне (жизни, спринт)."""
+    """Подбор пикапов, размещённых в уровне (жизни, абилки)."""
     for pickup in state.level_pickups:
         if pickup["collected"]:
             continue
         if _pickup_collision(state.playerx, state.playery, pickup["x"], pickup["y"]):
             pickup["collected"] = True
             _collect_pickup(state, pickup)
+
+
+def try_start_dash(state, keys):
+    """Запуск рывка по R, если абилка разблокирована."""
+    if not getattr(state, "dash_unlocked", False):
+        return
+    if state.dash_timer > 0 or state.dash_cooldown > 0:
+        return
+    if state.dialog is not None:
+        return
+    move = _movement_input(keys)
+    state.dash_dir = move if move != 0 else (1 if state.lookdir >= 0 else -1)
+    state.dash_timer = DASH_DURATION
+    state.kb_vx = 0
+    state.kb_vy = 0
+    state.playermovey = 0
+    state.x_vel = state.dash_dir * DASH_SPEED
+    if state.dash_dir > 0:
+        state.player = state.images['playeridet1']
+        state.lookdir = 1
+    else:
+        state.player = state.images['playeridet2']
+        state.lookdir = -1
 
 
 def _find_nearby_npc(state):
@@ -506,15 +538,41 @@ def update_player_movement(state, keys, ground_y):
     if state.boss_shake > 0 and state.boss_move != 5:
         state.boss_shake = max(0, state.boss_shake - 1)
 
+    if state.dash_cooldown > 0 and state.dash_timer <= 0:
+        state.dash_cooldown -= 1
+
     if state.dialog is not None:
         state.x_vel = 0
         state.playermovex = 0
         state.kb_vx = 0
         state.kb_vy = 0
+        state.dash_timer = 0
         on_ground = _on_ground(state, ground_y)
         if on_ground:
             state.playery = ground_y
             state.playermovey = 0
+        return
+
+    # Рывок: очень быстрый горизонтальный сдвиг ~0.3 с
+    if state.dash_timer > 0:
+        state.dash_timer -= 1
+        state.x_vel = state.dash_dir * DASH_SPEED
+        state.playerx += state.x_vel
+        world_w = getattr(state, "world_width", WORLD_WIDTH)
+        state.playerx = max(0, min(state.playerx, world_w - 40))
+        on_ground = _on_ground(state, ground_y)
+        if on_ground:
+            state.playery = ground_y
+            state.playermovey = 0
+        else:
+            state.playermovey = min(state.playermovey + GRAVITY_AIR * 0.35, FALL_SPEED_MAX * 0.4)
+            state.playery += state.playermovey * SPEED_PLAYER_Y
+            if state.playery > ground_y:
+                state.playery = ground_y
+                state.playermovey = 0
+        if state.dash_timer <= 0:
+            state.x_vel *= 0.35
+            state.dash_cooldown = DASH_COOLDOWN
         return
 
     _update_knockback(state)
@@ -604,7 +662,12 @@ def handle_events(state, keys, ground_y, events=()):
         if event.key == pygame.K_e:
             try_interact(state)
             continue
+        if event.key == pygame.K_r:
+            try_start_dash(state, keys)
+            continue
         if state.dialog is not None:
+            continue
+        if state.dash_timer > 0:
             continue
         if state.atakapl or state.atakazaderzhka > 0:
             continue
