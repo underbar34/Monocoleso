@@ -2,7 +2,7 @@
 import pygame
 import sys
 from config import WIDTH, HEIGHT, FPS, load_images, GameState
-from platforms import create_platforms
+from platforms import create_platforms, create_walls
 from level_loader import load_level, DEFAULT_LEVEL_PATH
 from logic import (
     update_akum, get_ground_y, update_player_movement, handle_events,
@@ -17,6 +17,7 @@ def run_game(screen, clock, level_path=DEFAULT_LEVEL_PATH):
     level = load_level(level_path)
     state = GameState(images, level)
     pls = create_platforms(level)
+    walls = create_walls(level)
     blur = MotionBlur()
 
     game_run = True
@@ -32,14 +33,15 @@ def run_game(screen, clock, level_path=DEFAULT_LEVEL_PATH):
         ground_y = get_ground_y(
             pls, state.playerx, state.playery,
             getattr(state, "ground_y_default", None),
+            walls,
         )
         update_extra_life(state)
         update_boss(state)
         update_loot(state)
         update_interactions(state)
         handle_events(state, keys, ground_y, events)
-        update_player_movement(state, keys, ground_y)
-        render(screen, state, pls, ground_y, blur)
+        update_player_movement(state, keys, ground_y, walls)
+        render(screen, state, pls, ground_y, blur, walls)
 
         if state.health <= 0:
             return "menu"

@@ -355,12 +355,22 @@
       "y": 233,
       "arena_x": 2500,
       "min_x": 2700,
-      "max_x": 5000
+      "max_x": 5000,
+      "id": "holodos"
     },
     {
       "type": "extra_life",
       "x": 125,
       "y": 10
+    },
+    {
+      "type": "ability",
+      "id": "dash",
+      "x": 370,
+      "y": 670
     }
-  ]
+  ],
+  "world_height": 2000,
+  "world_top": -400,
+  "walls": []
 }

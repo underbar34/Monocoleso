@@ -13,13 +13,51 @@ from config import (
     KNOCKBACK_BLEND, KNOCKBACK_DECAY, KNOCKBACK_RISE_MAX,
     PLAYER_ACCEL, PLAYER_FRICTION, SPRINT_MULT,
     DASH_DURATION, DASH_SPEED, DASH_COOLDOWN,
+    PLAYER_W, PLAYER_H,
 )
+from level_loader import boss_drop, ABILITY_CATALOG
 
 
 def get_camera_x(state):
-    world_w = getattr(state, "world_width", WORLD_WIDTH)
-    target = state.playerx - WIDTH // 3
-    return max(0, min(target, world_w - WIDTH))
+    cam_x, _ = get_camera(state)
+    return cam_x
+
+
+def get_camera(state):
+    """Камера следует за игроком по X и Y без границ мира."""
+    cam_x = state.playerx - WIDTH // 3
+    cam_y = state.playery - HEIGHT // 2
+    return cam_x, cam_y
+
+
+def _player_hitbox(state):
+    return pygame.Rect(int(state.playerx), int(state.playery), PLAYER_W, PLAYER_H)
+
+
+def resolve_walls(state, walls, axis):
+    """Твёрдая коллизия со стенами. axis: 'x' или 'y'."""
+    if not walls:
+        return
+    pr = _player_hitbox(state)
+    for wall in walls:
+        wr = pygame.Rect(wall.x, wall.y, wall.w, wall.h)
+        if not pr.colliderect(wr):
+            continue
+        if axis == "x":
+            if state.x_vel > 0 or (state.x_vel == 0 and pr.centerx <= wr.centerx):
+                state.playerx = wr.left - PLAYER_W
+            else:
+                state.playerx = wr.right
+            state.x_vel = 0
+            pr.x = int(state.playerx)
+        else:
+            if state.playermovey > 0 or (state.playermovey == 0 and pr.centery <= wr.centery):
+                state.playery = wr.top - PLAYER_H
+                state.playermovey = 0
+            else:
+                state.playery = wr.bottom
+                state.playermovey = 0
+            pr.y = int(state.playery)
 
 
 def _pickup_collision(px, py, cx, cy, size=28):
@@ -205,17 +243,49 @@ def _spawn_boss_loot(state):
     if state.loot_spawned:
         return
     state.loot_spawned = True
+
+    drop = boss_drop(getattr(state, "boss_id", "holodos"))
+    if not drop:
+        return
+
     bx, by = _boss_center(state)
-    for i in range(10):
-        angle = math.radians(i * 36)
-        state.coins.append({
-            "x": bx + math.cos(angle) * 60,
-            "y": by + math.sin(angle) * 40,
-            "vx": math.cos(angle) * 3,
-            "vy": math.sin(angle) * 3 - 2,
-            "collected": False,
+    coins = drop["coins"]
+    if coins > 0:
+        step = 360 / coins
+        for i in range(coins):
+            angle = math.radians(i * step)
+            state.coins.append({
+                "x": bx + math.cos(angle) * 60,
+                "y": by + math.sin(angle) * 40,
+                "vx": math.cos(angle) * 3,
+                "vy": math.sin(angle) * 3 - 2,
+                "collected": False,
+            })
+
+    state.boss_loot = []
+    for i, aid in enumerate(drop["abilities"]):
+        if aid not in ABILITY_CATALOG:
+            continue
+        state.boss_loot.append({
+            "type": "ability",
+            "id": aid,
+            "x": bx - 14 + i * 36,
+            "y": by - 14,
+            "active": True,
         })
-    state.sprint_pickup = {"x": bx - 14, "y": by - 14, "active": True}
+    state.sprint_pickup = None
+    for item in state.boss_loot:
+        if item["id"] == "sprint":
+            state.sprint_pickup = item
+            break
+
+
+def _grant_ability(state, ability_id):
+    if ability_id == "sprint":
+        state.sprint_podobran = True
+        state.sprint_unlocked = True
+    elif ability_id == "dash":
+        state.dash_unlocked = True
 
 
 def _update_boss_position(state):
@@ -377,12 +447,20 @@ def update_loot(state):
 
     state.coins = [c for c in state.coins if not c["collected"]]
 
-    if state.sprint_pickup and state.sprint_pickup["active"]:
+    for item in getattr(state, "boss_loot", []) or []:
+        if not item.get("active"):
+            continue
+        if _pickup_collision(state.playerx, state.playery, item["x"], item["y"]):
+            item["active"] = False
+            _grant_ability(state, item.get("id", "sprint"))
+
+    # legacy single sprint_pickup (если не в boss_loot)
+    if state.sprint_pickup and state.sprint_pickup.get("active"):
         p = state.sprint_pickup
-        if _pickup_collision(state.playerx, state.playery, p["x"], p["y"]):
-            state.sprint_podobran = True
-            state.sprint_unlocked = True
-            p["active"] = False
+        if p not in (getattr(state, "boss_loot", None) or []):
+            if _pickup_collision(state.playerx, state.playery, p["x"], p["y"]):
+                p["active"] = False
+                _grant_ability(state, "sprint")
 
 
 def update_akum(state):
@@ -391,14 +469,41 @@ def update_akum(state):
     state.akum = state.images[keys[min(power, 5)]]
 
 
-def get_ground_y(pls, playerx, playery, default_ground=None):
-    best = GROUND_Y if default_ground is None else default_ground
-    base = best
+_NO_GROUND = 10 ** 9
+
+
+def get_ground_y(pls, playerx, playery, default_ground=None, walls=None):
+    """Y опоры под игроком или None — тогда можно провалиться в пустоту.
+
+    default_ground больше не создаёт невидимый пол (оставлен для совместимости API).
+    """
+    best = None
     for pl in pls:
-        gy = pl.pup(playerx, playery, base)
-        if gy != base:
-            best = min(best, gy)
+        gy = pl.pup(playerx, playery, _NO_GROUND)
+        if gy != _NO_GROUND:
+            best = gy if best is None else min(best, gy)
+    if walls:
+        for wall in walls:
+            gy = wall.pup(playerx, playery, _NO_GROUND)
+            if gy != _NO_GROUND:
+                best = gy if best is None else min(best, gy)
     return best
+
+
+def _apply_ground(state, ground_y):
+    """Примагнитить к опоре, если она есть."""
+    if ground_y is None:
+        return False
+    state.playery = ground_y
+    state.playermovey = 0
+    return True
+
+
+def _fall_death(state):
+    """Смерть при глубоком падении в пустоту."""
+    floor_ref = getattr(state, "ground_y_default", GROUND_Y)
+    if state.playery > floor_ref + 900:
+        state.health = 0
 
 
 def _collect_pickup(state, pickup):
@@ -412,17 +517,11 @@ def _collect_pickup(state, pickup):
         if not remaining:
             state.extra_life_podobran = True
     elif pickup["type"] == "ability":
-        aid = pickup.get("id", "sprint")
-        if aid == "sprint":
-            state.sprint_podobran = True
-            state.sprint_unlocked = True
-        elif aid == "dash":
-            state.dash_unlocked = True
+        _grant_ability(state, pickup.get("id", "sprint"))
     elif pickup["type"] == "sprint_skill":
-        state.sprint_podobran = True
-        state.sprint_unlocked = True
+        _grant_ability(state, "sprint")
     elif pickup["type"] == "dash_skill":
-        state.dash_unlocked = True
+        _grant_ability(state, "dash")
 
 
 def update_extra_life(state):
@@ -534,7 +633,8 @@ def try_interact(state):
             state.health += 1
 
 
-def update_player_movement(state, keys, ground_y):
+def update_player_movement(state, keys, ground_y, walls=None):
+    walls = walls or []
     if state.boss_shake > 0 and state.boss_move != 5:
         state.boss_shake = max(0, state.boss_shake - 1)
 
@@ -547,10 +647,9 @@ def update_player_movement(state, keys, ground_y):
         state.kb_vx = 0
         state.kb_vy = 0
         state.dash_timer = 0
-        on_ground = _on_ground(state, ground_y)
+        on_ground = ground_y is not None and _on_ground(state, ground_y)
         if on_ground:
-            state.playery = ground_y
-            state.playermovey = 0
+            _apply_ground(state, ground_y)
         return
 
     # Рывок: очень быстрый горизонтальный сдвиг ~0.3 с
@@ -558,21 +657,20 @@ def update_player_movement(state, keys, ground_y):
         state.dash_timer -= 1
         state.x_vel = state.dash_dir * DASH_SPEED
         state.playerx += state.x_vel
-        world_w = getattr(state, "world_width", WORLD_WIDTH)
-        state.playerx = max(0, min(state.playerx, world_w - 40))
-        on_ground = _on_ground(state, ground_y)
+        resolve_walls(state, walls, "x")
+        on_ground = ground_y is not None and _on_ground(state, ground_y)
         if on_ground:
-            state.playery = ground_y
-            state.playermovey = 0
+            _apply_ground(state, ground_y)
         else:
             state.playermovey = min(state.playermovey + GRAVITY_AIR * 0.35, FALL_SPEED_MAX * 0.4)
             state.playery += state.playermovey * SPEED_PLAYER_Y
-            if state.playery > ground_y:
-                state.playery = ground_y
-                state.playermovey = 0
+            resolve_walls(state, walls, "y")
+            if ground_y is not None and state.playery > ground_y:
+                _apply_ground(state, ground_y)
         if state.dash_timer <= 0:
             state.x_vel *= 0.35
             state.dash_cooldown = DASH_COOLDOWN
+        _fall_death(state)
         return
 
     _update_knockback(state)
@@ -590,8 +688,7 @@ def update_player_movement(state, keys, ground_y):
             state.x_vel = 0
 
     state.playerx += state.x_vel
-    world_w = getattr(state, "world_width", WORLD_WIDTH)
-    state.playerx = max(0, min(state.playerx, world_w - 40))
+    resolve_walls(state, walls, "x")
 
     if state.playermovex == 1:
         state.player = state.images['playeridet1']
@@ -607,7 +704,7 @@ def update_player_movement(state, keys, ground_y):
             state.player = state.images['playerstoit2']
             state.lookdir = -1
 
-    on_ground = _on_ground(state, ground_y)
+    on_ground = ground_y is not None and _on_ground(state, ground_y)
 
     if on_ground:
         state.playery = ground_y
@@ -642,11 +739,16 @@ def update_player_movement(state, keys, ground_y):
     if not on_ground:
         state.playermovey = min(state.playermovey + GRAVITY_AIR, FALL_SPEED_MAX)
 
-    if state.playery > ground_y:
+    if ground_y is not None and state.playery > ground_y:
         state.playery = ground_y
         state.playermovey = 0
 
     state.playery += state.playermovey * SPEED_PLAYER_Y
+    resolve_walls(state, walls, "y")
+    if ground_y is not None and state.playery > ground_y:
+        state.playery = ground_y
+        state.playermovey = 0
+    _fall_death(state)
 
 
 def handle_events(state, keys, ground_y, events=()):

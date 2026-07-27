@@ -8,7 +8,7 @@
   ЛКМ          — поставить выбранный объект / выделить / перетащить
   ПКМ          — удалить объект/платформу под курсором
   WASD/стрелки — камера
-  1–7          — выбор инструмента
+  1–8          — выбор инструмента
   T            — для телепорта: клик задаёт точку назначения
   Enter        — редактировать диалог выделенного NPC
   Delete/Backspace — удалить выделение
@@ -21,7 +21,7 @@ import sys
 import os
 import pygame
 
-from config import WIDTH, HEIGHT, FPS, load_images
+from config import WIDTH, HEIGHT, FPS, load_images, WALL_W, WALL_H
 from level_loader import (
     DEFAULT_LEVEL_PATH,
     TOOL_CATEGORIES,
@@ -34,6 +34,7 @@ from level_loader import (
     save_level,
     ability_label,
     boss_label,
+    boss_drop,
 )
 
 TOOLS = TOOL_CATEGORIES
@@ -83,6 +84,7 @@ class LevelEditor:
         self.images = load_images()
 
         self.cam_x = 0
+        self.cam_y = 0
         self.tool = "platform"
         self.boss_variant = next(iter(BOSS_CATALOG))
         self.ability_variant = next(iter(ABILITY_CATALOG))
@@ -106,10 +108,13 @@ class LevelEditor:
         self.variant_rects = []
 
     def world_pos(self, mx, my):
-        return mx + self.cam_x, my
+        return mx + self.cam_x, my + self.cam_y
 
     def screen_x(self, wx):
         return wx - self.cam_x
+
+    def screen_y(self, wy):
+        return wy - self.cam_y
 
     def set_status(self, msg, frames=180):
         self.status = msg
@@ -145,6 +150,11 @@ class LevelEditor:
         r = pygame.Rect(sp["x"], sp["y"], 40, 50)
         if r.inflate(HIT_PAD, HIT_PAD).collidepoint(wx, wy):
             return ("spawn", None)
+        for i in range(len(self.level.get("walls", [])) - 1, -1, -1):
+            w = self.level["walls"][i]
+            r = pygame.Rect(w["x"], w["y"], WALL_W, WALL_H)
+            if r.inflate(8, 8).collidepoint(wx, wy):
+                return ("wall", i)
         for i in range(len(self.level["platforms"]) - 1, -1, -1):
             p = self.level["platforms"][i]
             r = pygame.Rect(p["x"], p["y"], 105, 20)
@@ -165,6 +175,11 @@ class LevelEditor:
             self.level["platforms"].append({"x": int(wx), "y": int(wy)})
             self.selected = ("platform", len(self.level["platforms"]) - 1)
             self.set_status(f"Платформа @ ({int(wx)}, {int(wy)})")
+            return
+        if self.tool == "wall":
+            self.level.setdefault("walls", []).append({"x": int(wx), "y": int(wy)})
+            self.selected = ("wall", len(self.level["walls"]) - 1)
+            self.set_status(f"Стена @ ({int(wx)}, {int(wy)})")
             return
         if self.tool == "player_spawn":
             self.level["player_spawn"] = {"x": int(wx), "y": int(wy)}
@@ -194,6 +209,9 @@ class LevelEditor:
         if kind == "platform" and 0 <= idx < len(self.level["platforms"]):
             del self.level["platforms"][idx]
             self.set_status("Платформа удалена")
+        elif kind == "wall" and 0 <= idx < len(self.level.get("walls", [])):
+            del self.level["walls"][idx]
+            self.set_status("Стена удалена")
         elif kind == "object" and 0 <= idx < len(self.level["objects"]):
             obj = self.level["objects"][idx]
             if _is_ability_obj(obj):
@@ -225,6 +243,9 @@ class LevelEditor:
         if kind == "platform":
             p = self.level["platforms"][idx]
             self.drag_ox, self.drag_oy = wx - p["x"], wy - p["y"]
+        elif kind == "wall":
+            w = self.level["walls"][idx]
+            self.drag_ox, self.drag_oy = wx - w["x"], wy - w["y"]
         elif kind == "object":
             o = self.level["objects"][idx]
             self.drag_ox, self.drag_oy = wx - o["x"], wy - o["y"]
@@ -242,6 +263,9 @@ class LevelEditor:
         if kind == "platform":
             self.level["platforms"][idx]["x"] = int(nx)
             self.level["platforms"][idx]["y"] = int(ny)
+        elif kind == "wall":
+            self.level["walls"][idx]["x"] = int(nx)
+            self.level["walls"][idx]["y"] = int(ny)
         elif kind == "object":
             self.level["objects"][idx]["x"] = int(nx)
             self.level["objects"][idx]["y"] = int(ny)
@@ -315,33 +339,47 @@ class LevelEditor:
         self.screen.fill((245, 248, 252))
         world_w = self.level.get("world_width", 6200)
         ground_y = self.level.get("ground_y", 726)
+        view_w = WIDTH - PANEL_W
 
         start = int(self.cam_x // 105) * 105
-        for x in range(start, int(self.cam_x + WIDTH - PANEL_W) + 105, 105):
+        for x in range(start, int(self.cam_x + view_w) + 105, 105):
             sx = self.screen_x(x)
             pygame.draw.line(self.screen, (230, 235, 240), (sx, 0), (sx, HEIGHT))
-        for y in range(0, HEIGHT, 85):
-            pygame.draw.line(self.screen, (230, 235, 240), (0, y), (WIDTH - PANEL_W, y))
+        start_y = int(self.cam_y // 85) * 85
+        for y in range(start_y, int(self.cam_y + HEIGHT) + 85, 85):
+            sy = self.screen_y(y)
+            pygame.draw.line(self.screen, (230, 235, 240), (0, sy), (view_w, sy))
 
-        pygame.draw.line(
-            self.screen, (180, 180, 180),
-            (0, ground_y), (WIDTH - PANEL_W, ground_y), 2,
+        gy = self.screen_y(ground_y)
+        pygame.draw.line(self.screen, (180, 180, 180), (0, gy), (view_w, gy), 2)
+        tip = self.font_sm.render(
+            f"ground_y={ground_y}  cam=({int(self.cam_x)}, {int(self.cam_y)})  world_w={world_w}",
+            True, (150, 150, 150),
         )
-        tip = self.font_sm.render(f"ground_y={ground_y}  world={world_w}", True, (150, 150, 150))
-        self.screen.blit(tip, (8, ground_y + 6))
+        self.screen.blit(tip, (8, gy + 6))
 
         plat_img = self.images["platform"]
         for i, p in enumerate(self.level["platforms"]):
-            sx, sy = self.screen_x(p["x"]), p["y"]
+            sx, sy = self.screen_x(p["x"]), self.screen_y(p["y"])
             self.screen.blit(plat_img, (sx, sy))
             if self.selected == ("platform", i):
                 pygame.draw.rect(self.screen, (255, 80, 80), (sx - 2, sy - 2, 109, 24), 2)
+
+        wall_img = self.images["wall"]
+        for i, w in enumerate(self.level.get("walls", [])):
+            sx, sy = self.screen_x(w["x"]), self.screen_y(w["y"])
+            self.screen.blit(wall_img, (sx, sy))
+            if self.selected == ("wall", i):
+                pygame.draw.rect(
+                    self.screen, (255, 80, 80),
+                    (sx - 2, sy - 2, WALL_W + 4, WALL_H + 4), 2,
+                )
 
         for i, obj in enumerate(self.level["objects"]):
             self._draw_object(obj, i)
 
         sp = self.level["player_spawn"]
-        sx, sy = self.screen_x(sp["x"]), sp["y"]
+        sx, sy = self.screen_x(sp["x"]), self.screen_y(sp["y"])
         self.screen.blit(self.images["playerstoit1"], (sx, sy))
         col = (255, 80, 80) if self.selected and self.selected[0] == "spawn" else (244, 67, 54)
         pygame.draw.rect(self.screen, col, (sx - 2, sy - 2, 44, 54), 2)
@@ -350,7 +388,7 @@ class LevelEditor:
 
     def _draw_object(self, obj, idx):
         t = obj["type"]
-        sx, sy = self.screen_x(obj["x"]), obj["y"]
+        sx, sy = self.screen_x(obj["x"]), self.screen_y(obj["y"])
         selected = self.selected == ("object", idx)
 
         if _is_boss_obj(obj):
@@ -395,7 +433,7 @@ class LevelEditor:
             pygame.draw.circle(self.screen, color, (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R)
             pygame.draw.circle(self.screen, (255, 255, 255), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R - 6, 2)
             tx = self.screen_x(obj.get("target_x", obj["x"] + 200))
-            ty = obj.get("target_y", obj["y"])
+            ty = self.screen_y(obj.get("target_y", obj["y"]))
             pygame.draw.line(
                 self.screen, color,
                 (sx + TELEPORT_R, sy + TELEPORT_R), (tx, ty), 2,
@@ -475,6 +513,7 @@ class LevelEditor:
         help_lines = [
             "ЛКМ — поставить/тащить",
             "ПКМ — удалить",
+            "WASD/стрелки — камера",
             "T — цель телепорта",
             "Enter — диалог NPC",
             "Ctrl+S — сохранить",
@@ -532,14 +571,26 @@ class LevelEditor:
         if kind == "platform":
             p = self.level["platforms"][idx]
             return [f"Платформа #{idx}", f"x={p['x']} y={p['y']}"]
+        if kind == "wall":
+            w = self.level["walls"][idx]
+            return [f"Стена #{idx}", f"x={w['x']} y={w['y']}"]
         obj = self.level["objects"][idx]
         if _is_boss_obj(obj):
-            return [
-                f"Босс: {boss_label(obj.get('id', 'holodos'))}",
+            bid = obj.get("id", "holodos")
+            drop = boss_drop(bid)
+            lines = [
+                f"Босс: {boss_label(bid)}",
                 f"x={obj['x']} y={obj['y']}",
                 f"arena_x={obj.get('arena_x')}",
                 f"min_x={obj.get('min_x')} max_x={obj.get('max_x')}",
             ]
+            if drop:
+                abl = ", ".join(drop["abilities"]) if drop["abilities"] else "—"
+                lines.append(f"дроп: {drop['coins']} монет")
+                lines.append(f"абилки: {abl}")
+            else:
+                lines.append("дроп: нет")
+            return lines
         if _is_ability_obj(obj):
             aid = _ability_id(obj)
             meta = ABILITY_CATALOG.get(aid, {})
@@ -602,7 +653,7 @@ class LevelEditor:
             if event.key == pygame.K_RETURN:
                 self.begin_dialog_edit()
                 return True
-            if pygame.K_1 <= event.key <= pygame.K_7:
+            if pygame.K_1 <= event.key <= pygame.K_8:
                 idx = event.key - pygame.K_1
                 if idx < len(TOOLS):
                     self.tool = TOOLS[idx]
@@ -677,13 +728,20 @@ class LevelEditor:
         speed = 14
         if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
             speed = 28
-        dx = 0
+        dx = dy = 0
         if keys[pygame.K_a] or keys[pygame.K_LEFT]:
             dx -= speed
         if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
             dx += speed
-        world_w = self.level.get("world_width", 6200)
-        self.cam_x = max(0, min(self.cam_x + dx, max(0, world_w - (WIDTH - PANEL_W))))
+        if keys[pygame.K_w] or keys[pygame.K_UP]:
+            dy -= speed
+        # S без Ctrl — вниз (Ctrl+S = сохранить)
+        if keys[pygame.K_DOWN] or (keys[pygame.K_s] and not (pygame.key.get_mods() & pygame.KMOD_CTRL)):
+            dy += speed
+        # Почти бесконечное пространство — мягкий предел только от переполнения
+        limit = 2_000_000
+        self.cam_x = max(-limit, min(self.cam_x + dx, limit))
+        self.cam_y = max(-limit, min(self.cam_y + dy, limit))
 
     def run(self):
         running = True

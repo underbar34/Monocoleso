@@ -1,4 +1,7 @@
 # platforms.py
+from config import WALL_W, WALL_H
+
+
 class Platform:
     def __init__(self, x, y):
         self.x = x
@@ -10,6 +13,31 @@ class Platform:
             return self.y - 70
         else:
             return ground_y
+
+
+class Wall:
+    """Вертикальная стена — повёрнутая платформа, сквозь которую нельзя пройти."""
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.w = WALL_W
+        self.h = WALL_H
+
+    def rect(self):
+        return (self.x, self.y, self.w, self.h)
+
+    def stand_y(self):
+        """Y игрока, если стоит на верхней грани стены."""
+        return self.y - 50
+
+    def pup(self, px, py, ground_y):
+        """Поверхность сверху стены — как узкая платформа."""
+        if self.x - 35 <= px <= self.x + self.w - 5:
+            top = self.y
+            if top - 55 < py + 50 <= top + 8 and py < top:
+                return self.stand_y()
+        return ground_y
 
 
 def _row(x_start, x_end, y, step=105):
@@ -60,3 +88,10 @@ def create_platforms(level=None):
         if pls:
             return pls
     return create_platforms_fallback()
+
+
+def create_walls(level=None):
+    if level is None:
+        return []
+    from level_loader import walls_from_level
+    return walls_from_level(level)

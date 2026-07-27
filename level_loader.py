@@ -2,7 +2,7 @@
 """Загрузка / сохранение уровней из JSON. Каталоги боссов и абилок."""
 import json
 import os
-from platforms import Platform
+from platforms import Platform, Wall
 
 DEFAULT_LEVEL_PATH = os.path.join("levels", "level1.json")
 
@@ -18,7 +18,21 @@ BOSS_CATALOG = {
             "min_x_offset": -1100,
             "max_x_offset": 1200,
         },
+        # Дроп при смерти. Пустой drop / None / {} — ничего не падает.
+        # abilities — id из ABILITY_CATALOG; coins — число монет.
+        "drop": {
+            "coins": 10,
+            "abilities": ["sprint"],
+        },
     },
+    # Пример босса без дропа:
+    # "empty_boss": {
+    #     "label": "Пустой",
+    #     "color": (120, 120, 120),
+    #     "sprite": "holodos1",
+    #     "defaults": {...},
+    #     "drop": None,  # или {"coins": 0, "abilities": []}
+    # },
 }
 
 ABILITY_CATALOG = {
@@ -39,6 +53,7 @@ ABILITY_CATALOG = {
 # Инструменты верхнего уровня в редакторе
 TOOL_CATEGORIES = (
     "platform",
+    "wall",
     "player_spawn",
     "boss",
     "ability",
@@ -57,6 +72,7 @@ OBJECT_COLORS = {
     "npc": (255, 152, 0),
     "player_spawn": (244, 67, 54),
     "platform": (120, 120, 120),
+    "wall": (90, 90, 110),
 }
 
 OBJECT_LABELS = {
@@ -69,6 +85,7 @@ OBJECT_LABELS = {
     "npc": "NPC",
     "player_spawn": "Спавн",
     "platform": "Платформа",
+    "wall": "Стена",
 }
 
 # Старые типы абилок → id
@@ -148,9 +165,12 @@ def empty_level(name="level1", world_width=6200, ground_y=726):
     return {
         "name": name,
         "world_width": world_width,
+        "world_height": 2000,
+        "world_top": -400,
         "ground_y": ground_y,
         "player_spawn": {"x": 120, "y": 640},
         "platforms": [],
+        "walls": [],
         "objects": [],
     }
 
@@ -162,9 +182,12 @@ def load_level(path=DEFAULT_LEVEL_PATH):
         data = json.load(f)
     data.setdefault("name", "level")
     data.setdefault("world_width", 6200)
+    data.setdefault("world_height", 2000)
+    data.setdefault("world_top", -400)
     data.setdefault("ground_y", 726)
     data.setdefault("player_spawn", {"x": 120, "y": 640})
     data.setdefault("platforms", [])
+    data.setdefault("walls", [])
     data["objects"] = [normalize_object(o) for o in data.get("objects", [])]
     return data
 
@@ -174,6 +197,7 @@ def save_level(data, path=DEFAULT_LEVEL_PATH):
     if folder:
         os.makedirs(folder, exist_ok=True)
     to_save = dict(data)
+    to_save.setdefault("walls", [])
     to_save["objects"] = [normalize_object(o) for o in data.get("objects", [])]
     with open(path, "w", encoding="utf-8") as f:
         json.dump(to_save, f, ensure_ascii=False, indent=2)
@@ -181,6 +205,10 @@ def save_level(data, path=DEFAULT_LEVEL_PATH):
 
 def platforms_from_level(level):
     return [Platform(p["x"], p["y"]) for p in level.get("platforms", [])]
+
+
+def walls_from_level(level):
+    return [Wall(w["x"], w["y"]) for w in level.get("walls", [])]
 
 
 def objects_of_type(level, obj_type):
@@ -200,3 +228,19 @@ def ability_label(ability_id):
 
 def boss_label(boss_id):
     return BOSS_CATALOG.get(boss_id, {}).get("label", boss_id)
+
+
+def boss_drop(boss_id):
+    """Возвращает нормализованный дроп босса или None, если дропа нет."""
+    meta = BOSS_CATALOG.get(boss_id) or {}
+    drop = meta.get("drop")
+    if not drop:
+        return None
+    coins = int(drop.get("coins", 0) or 0)
+    abilities = [
+        aid for aid in (drop.get("abilities") or [])
+        if aid in ABILITY_CATALOG
+    ]
+    if coins <= 0 and not abilities:
+        return None
+    return {"coins": max(0, coins), "abilities": abilities}

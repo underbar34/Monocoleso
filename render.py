@@ -3,7 +3,8 @@ import pygame
 from config import (
     HEALTH_MAX, ATAKA_KADRY, WIDTH, HEIGHT, BOSS_MAX_HP,
 )
-from logic import get_camera_x, _boss_in_arena
+from logic import get_camera, _boss_in_arena
+from level_loader import ABILITY_CATALOG
 
 NPC_W, NPC_H = 36, 50
 TELEPORT_R = 18
@@ -45,8 +46,8 @@ def _draw_boss_hp_bar(screen, state):
     screen.blit(text, text.get_rect(center=(WIDTH // 2, bar_y - 12)))
 
 
-def _draw_npc(screen, npc, cam_x):
-    sx, sy = npc["x"] - cam_x, npc["y"]
+def _draw_npc(screen, npc, cam_x, cam_y):
+    sx, sy = npc["x"] - cam_x, npc["y"] - cam_y
     body = pygame.Rect(sx, sy, NPC_W, NPC_H)
     pygame.draw.rect(screen, (255, 152, 0), body)
     pygame.draw.rect(screen, (80, 50, 0), body, 2)
@@ -56,9 +57,9 @@ def _draw_npc(screen, npc, cam_x):
     screen.blit(name, name.get_rect(midbottom=(sx + NPC_W // 2, sy - 4)))
 
 
-def _draw_teleport(screen, tp, cam_x):
+def _draw_teleport(screen, tp, cam_x, cam_y):
     sx = tp["x"] - cam_x + TELEPORT_R
-    sy = tp["y"] + TELEPORT_R
+    sy = tp["y"] - cam_y + TELEPORT_R
     pygame.draw.circle(screen, (0, 188, 212), (sx, sy), TELEPORT_R)
     pygame.draw.circle(screen, (255, 255, 255), (sx, sy), TELEPORT_R - 6, 2)
 
@@ -83,7 +84,6 @@ def _draw_dialog(screen, state):
 
     idx = d["index"]
     line = d["lines"][idx] if 0 <= idx < len(d["lines"]) else ""
-    # перенос длинных строк
     words = line.split()
     rows, cur = [], ""
     for w in words:
@@ -120,19 +120,23 @@ def _draw_hint(screen, state):
     screen.blit(text, bg)
 
 
-def render(screen, state, pls, ground_y, blur):
-    cam_x = get_camera_x(state)
+def render(screen, state, pls, ground_y, blur, walls=None):
+    walls = walls or []
+    cam_x, cam_y = get_camera(state)
 
     screen.fill([255, 255, 255])
 
     for pl in pls:
-        screen.blit(state.images['platform'], (pl.x - cam_x, pl.y))
+        screen.blit(state.images['platform'], (pl.x - cam_x, pl.y - cam_y))
+
+    for wall in walls:
+        screen.blit(state.images['wall'], (wall.x - cam_x, wall.y - cam_y))
 
     for tp in state.teleports:
-        _draw_teleport(screen, tp, cam_x)
+        _draw_teleport(screen, tp, cam_x, cam_y)
 
     for npc in state.npcs:
-        _draw_npc(screen, npc, cam_x)
+        _draw_npc(screen, npc, cam_x, cam_y)
 
     for pickup in state.level_pickups:
         if pickup["collected"]:
@@ -146,27 +150,38 @@ def render(screen, state, pls, ground_y, blur):
             key = "sprint_skill"
         else:
             key = "extra_life"
-        screen.blit(state.images[key], (pickup["x"] - cam_x, pickup["y"]))
+        screen.blit(state.images[key], (pickup["x"] - cam_x, pickup["y"] - cam_y))
 
     if state.boss_alive or state.boss_dying:
         shake = state.boss_shake if state.boss_alive else 0
         sprite = state.images[_boss_sprite_key(state)]
-        screen.blit(sprite, (state.boss_x + shake - cam_x, state.boss_y))
+        screen.blit(sprite, (state.boss_x + shake - cam_x, state.boss_y - cam_y))
 
     for sf in state.snowflakes:
-        screen.blit(state.images['snowflake'], (sf["x"] - 8 - cam_x, sf["y"] - 8))
+        screen.blit(state.images['snowflake'], (sf["x"] - 8 - cam_x, sf["y"] - 8 - cam_y))
 
     for coin in state.coins:
         if not coin["collected"]:
-            screen.blit(state.images['coin'], (coin["x"] - 10 - cam_x, coin["y"] - 10))
+            screen.blit(state.images['coin'], (coin["x"] - 10 - cam_x, coin["y"] - 10 - cam_y))
 
-    if state.sprint_pickup and state.sprint_pickup["active"]:
+    drawn_loot = set()
+    for item in getattr(state, "boss_loot", []) or []:
+        if not item.get("active"):
+            continue
+        aid = item.get("id", "sprint")
+        img_key = ABILITY_CATALOG.get(aid, {}).get(
+            "image", "dash_skill" if aid == "dash" else "sprint_skill",
+        )
+        screen.blit(state.images[img_key], (item["x"] - cam_x, item["y"] - cam_y))
+        drawn_loot.add(id(item))
+
+    if state.sprint_pickup and state.sprint_pickup.get("active") and id(state.sprint_pickup) not in drawn_loot:
         p = state.sprint_pickup
-        screen.blit(state.images['sprint_skill'], (p["x"] - cam_x, p["y"]))
+        screen.blit(state.images['sprint_skill'], (p["x"] - cam_x, p["y"] - cam_y))
 
     blur.update(state.playerx, state.playery, state.player, strong=False)
-    blur.draw(screen, cam_x)
-    screen.blit(state.player, (state.playerx - cam_x, state.playery))
+    blur.draw(screen, cam_x, cam_y)
+    screen.blit(state.player, (state.playerx - cam_x, state.playery - cam_y))
 
     giznx = 50
     for i in range(state.health):
@@ -177,16 +192,16 @@ def render(screen, state, pls, ground_y, blur):
         giznx += 40
 
     if state.flagatak == 1 and state.vrematakpl <= ATAKA_KADRY:
-        screen.blit(state.images['playerataka1'], (state.playerx + 17 - cam_x, state.playery))
+        screen.blit(state.images['playerataka1'], (state.playerx + 17 - cam_x, state.playery - cam_y))
         state.vrematakpl += 1
     elif state.flagatak == 2 and state.vrematakpl <= ATAKA_KADRY:
-        screen.blit(state.images['playerataka2'], (state.playerx - 78 - cam_x, state.playery))
+        screen.blit(state.images['playerataka2'], (state.playerx - 78 - cam_x, state.playery - cam_y))
         state.vrematakpl += 1
     elif state.flagatak == 3 and state.vrematakpl <= ATAKA_KADRY:
-        screen.blit(state.images['playerataka3'], (state.playerx + 8 - cam_x, state.playery - 90))
+        screen.blit(state.images['playerataka3'], (state.playerx + 8 - cam_x, state.playery - 90 - cam_y))
         state.vrematakpl += 1
     elif state.flagatak == 4 and state.vrematakpl <= ATAKA_KADRY:
-        screen.blit(state.images['playerataka4'], (state.playerx + 8 - cam_x, state.playery + 5))
+        screen.blit(state.images['playerataka4'], (state.playerx + 8 - cam_x, state.playery + 5 - cam_y))
         state.vrematakpl += 1
     else:
         state.atakapl = False

@@ -52,6 +52,14 @@ GROUND_Y = 726
 
 # Размер мира
 WORLD_WIDTH = 6200
+WORLD_HEIGHT = 2000
+WORLD_TOP = -400
+
+# Стена (повёрнутая платформа)
+WALL_W = 20
+WALL_H = 116
+PLAYER_W = 40
+PLAYER_H = 50
 
 # Босс — холодос
 BOSS_MAX_HP = 600
@@ -98,6 +106,7 @@ def load_images():
     images['playerstoit1'] = pygame.image.load("Assets/Tems/Tems(stoit1).png")
     images['playerstoit2'] = pygame.image.load("Assets/Tems/Tems(stoit2).png")
     images['platform'] = pygame.image.load("Assets/locat/platform.png")
+    images['wall'] = pygame.transform.rotate(images['platform'], 90)
 
     for i in range(1, 5):
         raw = pygame.image.load(f"Assets/holodos/holodos{i}.png")
@@ -182,6 +191,7 @@ class GameState:
         self.sprint_unlocked = False
         self.sprint_podobran = False
         self.sprint_pickup = None
+        self.boss_loot = []
         self.dash_unlocked = False
         self.dash_timer = 0
         self.dash_cooldown = 0
@@ -219,6 +229,8 @@ class GameState:
         self.interact_hint = None
 
         self.world_width = WORLD_WIDTH
+        self.world_height = WORLD_HEIGHT
+        self.world_top = WORLD_TOP
         self.ground_y_default = GROUND_Y
 
         if level is not None:
@@ -229,6 +241,8 @@ class GameState:
         self.playerx = spawn.get("x", 120)
         self.playery = spawn.get("y", 640)
         self.world_width = level.get("world_width", WORLD_WIDTH)
+        self.world_height = level.get("world_height", WORLD_HEIGHT)
+        self.world_top = level.get("world_top", WORLD_TOP)
         self.ground_y_default = level.get("ground_y", GROUND_Y)
 
         self.level_pickups = []
