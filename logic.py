@@ -10,7 +10,7 @@ from config import (
     BOSS_W, BOSS_H, BOSS_ARENA_X, BOSS_MIN_X, BOSS_MAX_X,
     BOSS_SPEED, BOSS_SPEED_PHASE2, BOSS_HIT_COOLDOWN, BOSS_CONTACT_DAMAGE,
     KNOCKBACK_SIDE, KNOCKBACK_VERTICAL, KNOCKBACK_UP, KNOCKBACK_UP_MULT,
-    KNOCKBACK_BLEND, KNOCKBACK_DECAY,
+    KNOCKBACK_BLEND, KNOCKBACK_DECAY, KNOCKBACK_RISE_MAX,
     PLAYER_ACCEL, PLAYER_FRICTION, SPRINT_MULT,
 )
 
@@ -318,6 +318,8 @@ def _update_knockback(state):
 
     if state.kb_vy:
         state.playermovey += state.kb_vy * KNOCKBACK_BLEND
+        if state.kb_vy < 0:
+            state.playermovey = max(state.playermovey, KNOCKBACK_RISE_MAX)
         state.kb_vy *= KNOCKBACK_DECAY
         if abs(state.kb_vy) < 0.06:
             state.kb_vy = 0

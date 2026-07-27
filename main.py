@@ -54,8 +54,13 @@ def run_game(screen, clock):
         # Отрисовка
         render(screen, state, pls, ground_y, blur)
         
+        if state.health <= 0:
+            return "menu"
+
         # Контроль FPS
         clock.tick(FPS)
+
+    return "quit"
 
 def main():
     pygame.init()
@@ -64,8 +69,11 @@ def main():
     pygame.display.set_caption("Monocoleso")
     clock = pygame.time.Clock()
 
-    if run_menu(screen, clock) == "play":
-        run_game(screen, clock)
+    while True:
+        if run_menu(screen, clock) != "play":
+            break
+        if run_game(screen, clock) == "quit":
+            break
 
     pygame.quit()
     sys.exit()
