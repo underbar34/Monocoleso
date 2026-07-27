@@ -6,9 +6,14 @@ from platforms import create_platforms
 from logic import update_akum, get_ground_y, update_player_movement, handle_events, update_plashik
 from render import render
 from motion_blur import MotionBlur
-from menu import run_menu
 
-def run_game(screen, clock):
+def main():
+    pygame.init()
+    
+    # Создание окна
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Monocoleso")
+    
     # Загрузка изображений
     images = load_images()
     
@@ -20,6 +25,9 @@ def run_game(screen, clock):
 
     # Motion blur
     blur = MotionBlur()
+    
+    # Контроль FPS
+    clock = pygame.time.Clock()
     
     # Игровой цикл
     game_run = True
@@ -52,17 +60,7 @@ def run_game(screen, clock):
         
         # Контроль FPS
         clock.tick(FPS)
-
-def main():
-    pygame.init()
-
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Monocoleso")
-    clock = pygame.time.Clock()
-
-    if run_menu(screen, clock) == "play":
-        run_game(screen, clock)
-
+    
     pygame.quit()
     sys.exit()
 
