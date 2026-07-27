@@ -34,7 +34,7 @@ JUMP_TIMER_MAX = 30
 ATAKA_KADRY = 10
 
 # Земля по умолчанию
-GROUND_Y = 526
+GROUND_Y = 726
 
 # Здоровье
 HEALTH_MAX = 5

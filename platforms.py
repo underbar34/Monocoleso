@@ -13,9 +13,9 @@ class Platform:
 
 def create_platforms():
     from platforms import Platform
-    pl1 = Platform(450, 510)
-    pl2 = Platform(900, 510)
-    pl3 = Platform(10, 510)
-    pl4 = Platform(200, 450)
-    pl5 = Platform(700, 450)
+    pl1 = Platform(750, 710)
+    pl2 = Platform(1400, 710)
+    pl3 = Platform(100, 710)
+    pl4 = Platform(400, 650)
+    pl5 = Platform(1100, 650)
     return [pl1, pl2, pl3, pl4, pl5]
