@@ -16,12 +16,19 @@ from config import (
 
 
 def get_camera_x(state):
+    world_w = getattr(state, "world_width", WORLD_WIDTH)
     target = state.playerx - WIDTH // 3
-    return max(0, min(target, WORLD_WIDTH - WIDTH))
+    return max(0, min(target, world_w - WIDTH))
 
 
 def _pickup_collision(px, py, cx, cy, size=28):
     return px < cx + size and px + 40 > cx and py < cy + size and py + 50 > cy
+
+
+def _near_rect(px, py, rx, ry, rw, rh, pad=30):
+    return pygame.Rect(rx - pad, ry - pad, rw + pad * 2, rh + pad * 2).colliderect(
+        pygame.Rect(px, py, 40, 50)
+    )
 
 
 def _movement_input(keys):
@@ -83,7 +90,8 @@ def _aim_at_player(state, speed, spread=0.0):
 
 
 def _boss_in_arena(state):
-    return state.playerx >= BOSS_ARENA_X - 200
+    arena = getattr(state, "boss_arena_x", BOSS_ARENA_X)
+    return state.playerx >= arena - 200
 
 
 def _boss_start_move(state, move_id):
@@ -220,15 +228,18 @@ def _update_boss_position(state):
         speed *= 2.2
 
     target_x = state.playerx + 20 - BOSS_W // 2
-    target_x = max(BOSS_MIN_X, min(target_x, BOSS_MAX_X))
+    min_x = getattr(state, "boss_min_x", BOSS_MIN_X)
+    max_x = getattr(state, "boss_max_x", BOSS_MAX_X)
+    target_x = max(min_x, min(target_x, max_x))
     dx = target_x - state.boss_x
     if abs(dx) > speed:
         state.boss_x += speed if dx > 0 else -speed
     else:
         state.boss_x = target_x
 
-    # Лёгкое покачивание по вертикали в фазе 2
-    base_y = BOSS_Y
+    if not hasattr(state, "_boss_base_y"):
+        state._boss_base_y = state.boss_y
+    base_y = state._boss_base_y
     if state.boss_phase == 2:
         state.boss_y = base_y + int(math.sin(state.boss_anim * 0.15) * 12)
     else:
@@ -277,9 +288,10 @@ def update_boss(state):
     for sf in state.snowflakes:
         sf["x"] += sf["vx"]
         sf["y"] += sf["vy"]
+    world_w = getattr(state, "world_width", WORLD_WIDTH)
     state.snowflakes = [
         sf for sf in state.snowflakes
-        if -50 < sf["x"] < WORLD_WIDTH + 50 and -50 < sf["y"] < HEIGHT + 50
+        if -50 < sf["x"] < world_w + 50 and -50 < sf["y"] < HEIGHT + 50
     ]
 
     # Урон игроку от снежинок и касания босса
@@ -348,14 +360,15 @@ def update_boss_combat(state):
 
 
 def update_loot(state):
+    ground = getattr(state, "ground_y_default", GROUND_Y)
     for coin in state.coins:
         if coin["collected"]:
             continue
         coin["x"] += coin["vx"]
         coin["y"] += coin["vy"]
         coin["vy"] += 0.15
-        if coin["y"] > GROUND_Y - 20:
-            coin["y"] = GROUND_Y - 20
+        if coin["y"] > ground - 20:
+            coin["y"] = ground - 20
             coin["vy"] *= -0.4
             coin["vx"] *= 0.85
         if _pickup_collision(state.playerx, state.playery, coin["x"], coin["y"], 20):
@@ -377,27 +390,132 @@ def update_akum(state):
     state.akum = state.images[keys[min(power, 5)]]
 
 
-def get_ground_y(pls, playerx, playery):
-    best = GROUND_Y
+def get_ground_y(pls, playerx, playery, default_ground=None):
+    best = GROUND_Y if default_ground is None else default_ground
+    base = best
     for pl in pls:
-        gy = pl.pup(playerx, playery, GROUND_Y)
-        if gy != GROUND_Y:
+        gy = pl.pup(playerx, playery, base)
+        if gy != base:
             best = min(best, gy)
     return best
 
 
-def update_extra_life(state):
-    if state.extra_life_podobran:
-        return
-    if _pickup_collision(state.playerx, state.playery, state.extra_lifex, state.extra_lifey):
-        state.extra_life_podobran = True
+def _collect_pickup(state, pickup):
+    if pickup["type"] == "extra_life":
         if state.health < HEALTH_MAX:
+            state.health += 1
+        # синхронизация старого флага
+        remaining = [
+            p for p in state.level_pickups
+            if p["type"] == "extra_life" and not p["collected"] and p is not pickup
+        ]
+        if not remaining:
+            state.extra_life_podobran = True
+    elif pickup["type"] == "sprint_skill":
+        state.sprint_podobran = True
+        state.sprint_unlocked = True
+
+
+def update_extra_life(state):
+    """Подбор пикапов, размещённых в уровне (жизни, спринт)."""
+    for pickup in state.level_pickups:
+        if pickup["collected"]:
+            continue
+        if _pickup_collision(state.playerx, state.playery, pickup["x"], pickup["y"]):
+            pickup["collected"] = True
+            _collect_pickup(state, pickup)
+
+
+def _find_nearby_npc(state):
+    for i, npc in enumerate(state.npcs):
+        if _near_rect(state.playerx, state.playery, npc["x"], npc["y"], 36, 50, pad=40):
+            return i, npc
+    return None, None
+
+
+def _find_nearby_teleport(state):
+    for tp in state.teleports:
+        if _near_rect(state.playerx, state.playery, tp["x"], tp["y"], 36, 36, pad=10):
+            return tp
+    return None
+
+
+def update_interactions(state):
+    """Подсказки взаимодействия и телепорт при касании метки."""
+    state.interact_hint = None
+
+    if state.dialog is not None:
+        state.interact_hint = "E — дальше"
+        return
+
+    if state.teleport_cooldown > 0:
+        state.teleport_cooldown -= 1
+
+    npc_i, npc = _find_nearby_npc(state)
+    if npc is not None:
+        state.interact_hint = f"E — говорить ({npc['name']})"
+
+    tp = _find_nearby_teleport(state)
+    if tp is not None:
+        if state.interact_hint is None:
+            state.interact_hint = "Телепорт..."
+        if state.teleport_cooldown <= 0:
+            state.playerx = tp["target_x"]
+            state.playery = tp["target_y"]
+            state.teleport_cooldown = 45
+            state.x_vel = 0
+            state.playermovey = 0
+
+
+def _advance_dialog(state):
+    d = state.dialog
+    if d is None:
+        return
+    d["index"] += 1
+    if d["index"] >= len(d["lines"]):
+        state.dialog = None
+
+
+def _start_dialog(state, npc):
+    lines = npc.get("dialog") or ["..."]
+    state.dialog = {
+        "name": npc.get("name", "NPC"),
+        "lines": list(lines),
+        "index": 0,
+    }
+
+
+def try_interact(state):
+    """Нажатие E: диалог с NPC или лечение акумом."""
+    if state.dialog is not None:
+        _advance_dialog(state)
+        return
+
+    npc_i, npc = _find_nearby_npc(state)
+    if npc is not None:
+        _start_dialog(state, npc)
+        return
+
+    if state.akumpower == 5:
+        state.akumpower = 0
+        if state.health <= HEALTH_MAX:
             state.health += 1
 
 
 def update_player_movement(state, keys, ground_y):
     if state.boss_shake > 0 and state.boss_move != 5:
         state.boss_shake = max(0, state.boss_shake - 1)
+
+    if state.dialog is not None:
+        state.x_vel = 0
+        state.playermovex = 0
+        state.kb_vx = 0
+        state.kb_vy = 0
+        on_ground = _on_ground(state, ground_y)
+        if on_ground:
+            state.playery = ground_y
+            state.playermovey = 0
+        return
 
     _update_knockback(state)
 
@@ -414,7 +532,8 @@ def update_player_movement(state, keys, ground_y):
             state.x_vel = 0
 
     state.playerx += state.x_vel
-    state.playerx = max(0, min(state.playerx, WORLD_WIDTH - 40))
+    world_w = getattr(state, "world_width", WORLD_WIDTH)
+    state.playerx = max(0, min(state.playerx, world_w - 40))
 
     if state.playermovex == 1:
         state.player = state.images['playeridet1']
@@ -473,7 +592,7 @@ def update_player_movement(state, keys, ground_y):
 
 
 def handle_events(state, keys, ground_y, events=()):
-    if keys[pygame.K_s] and state.otpuskal and state.playermovey == 0:
+    if state.dialog is None and keys[pygame.K_s] and state.otpuskal and state.playermovey == 0:
         state.playery += 40
 
     if state.atakazaderzhka > 0:
@@ -481,6 +600,11 @@ def handle_events(state, keys, ground_y, events=()):
 
     for event in events:
         if event.type != pygame.KEYDOWN:
+            continue
+        if event.key == pygame.K_e:
+            try_interact(state)
+            continue
+        if state.dialog is not None:
             continue
         if state.atakapl or state.atakazaderzhka > 0:
             continue
@@ -504,10 +628,5 @@ def handle_events(state, keys, ground_y, events=()):
             state.flagatak = 4
             state.atakazaderzhka = ATAKA_ZADERZHKA
             state.boss_attack_hit = False
-
-    if keys[pygame.K_e] and state.akumpower == 5:
-        state.akumpower = 0
-        if state.health <= HEALTH_MAX:
-            state.health += 1
 
     update_boss_combat(state)

@@ -3,61 +3,47 @@ import pygame
 import sys
 from config import WIDTH, HEIGHT, FPS, load_images, GameState
 from platforms import create_platforms
+from level_loader import load_level, DEFAULT_LEVEL_PATH
 from logic import (
     update_akum, get_ground_y, update_player_movement, handle_events,
-    update_extra_life, update_boss, update_loot,
+    update_extra_life, update_boss, update_loot, update_interactions,
 )
 from render import render
 from motion_blur import MotionBlur
 from menu import run_menu
 
-def run_game(screen, clock):
-    # Загрузка изображений
+def run_game(screen, clock, level_path=DEFAULT_LEVEL_PATH):
     images = load_images()
-    
-    # Создание состояния игры
-    state = GameState(images)
-    
-    # Создание платформ
-    pls = create_platforms()
-
-    # Motion blur
+    level = load_level(level_path)
+    state = GameState(images, level)
+    pls = create_platforms(level)
     blur = MotionBlur()
-    
-    # Игровой цикл
+
     game_run = True
     while game_run:
         events = pygame.event.get()
         for event in events:
             if event.type == pygame.QUIT:
                 game_run = False
-        
+
         keys = pygame.key.get_pressed()
-        
-        # Обновление акума
+
         update_akum(state)
-        
-        # Получение высоты земли
-        ground_y = get_ground_y(pls, state.playerx, state.playery)
-        
-        # Подбор плащика и доп. жизни
+        ground_y = get_ground_y(
+            pls, state.playerx, state.playery,
+            getattr(state, "ground_y_default", None),
+        )
         update_extra_life(state)
         update_boss(state)
         update_loot(state)
-        
-        # Обработка событий клавиатуры
+        update_interactions(state)
         handle_events(state, keys, ground_y, events)
-        
-        # Обновление движения игрока
         update_player_movement(state, keys, ground_y)
-        
-        # Отрисовка
         render(screen, state, pls, ground_y, blur)
-        
+
         if state.health <= 0:
             return "menu"
 
-        # Контроль FPS
         clock.tick(FPS)
 
     return "quit"

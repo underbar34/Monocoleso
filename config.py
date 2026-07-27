@@ -128,7 +128,7 @@ def load_images():
 
 
 class GameState:
-    def __init__(self, images):
+    def __init__(self, images, level=None):
         self.player = images['player']
         self.playerx = 120
         self.playery = 640
@@ -161,20 +161,26 @@ class GameState:
         self.images = images
         self.lookdir = 1
 
-        # Доп. жизнь
-        self.extra_life_podobran = False
-        self.extra_lifex = 125
-        self.extra_lifey = 10
+        # Пикапы с уровня (extra_life / sprint_skill)
+        self.level_pickups = []
 
-        # Абилка спринта (выпадает с босса)
+        # Совместимость со старым кодом доп. жизни
+        self.extra_life_podobran = True
+        self.extra_lifex = -9999
+        self.extra_lifey = -9999
+
+        # Абилка спринта (выпадает с босса + можно поставить в редакторе)
         self.sprint_unlocked = False
         self.sprint_podobran = False
         self.sprint_pickup = None
 
         # Босс
-        self.boss_alive = True
+        self.boss_alive = False
         self.boss_x = BOSS_X
         self.boss_y = BOSS_Y
+        self.boss_arena_x = BOSS_ARENA_X
+        self.boss_min_x = BOSS_MIN_X
+        self.boss_max_x = BOSS_MAX_X
         self.boss_hp = BOSS_MAX_HP
         self.boss_phase = 1
         self.boss_anim = 0
@@ -190,3 +196,72 @@ class GameState:
         self.snowflakes = []
         self.coins = []
         self.loot_spawned = False
+
+        # NPC / телепорты / диалог
+        self.npcs = []
+        self.teleports = []
+        self.teleport_cooldown = 0
+        self.dialog = None  # {"name", "lines", "index"}
+        self.interact_hint = None
+
+        self.world_width = WORLD_WIDTH
+        self.ground_y_default = GROUND_Y
+
+        if level is not None:
+            self.apply_level(level)
+
+    def apply_level(self, level):
+        spawn = level.get("player_spawn", {"x": 120, "y": 640})
+        self.playerx = spawn.get("x", 120)
+        self.playery = spawn.get("y", 640)
+        self.world_width = level.get("world_width", WORLD_WIDTH)
+        self.ground_y_default = level.get("ground_y", GROUND_Y)
+
+        self.level_pickups = []
+        self.npcs = []
+        self.teleports = []
+        self.boss_alive = False
+
+        for obj in level.get("objects", []):
+            t = obj.get("type")
+            if t == "boss":
+                self.boss_alive = True
+                self.boss_x = obj.get("x", BOSS_X)
+                self.boss_y = obj.get("y", BOSS_Y)
+                self.boss_arena_x = obj.get("arena_x", BOSS_ARENA_X)
+                self.boss_min_x = obj.get("min_x", BOSS_MIN_X)
+                self.boss_max_x = obj.get("max_x", BOSS_MAX_X)
+                self.boss_hp = BOSS_MAX_HP
+                self.boss_phase = 1
+                self.boss_dying = False
+                self.loot_spawned = False
+            elif t in ("extra_life", "sprint_skill"):
+                self.level_pickups.append({
+                    "type": t,
+                    "x": obj["x"],
+                    "y": obj["y"],
+                    "collected": False,
+                })
+            elif t == "npc":
+                self.npcs.append({
+                    "x": obj["x"],
+                    "y": obj["y"],
+                    "name": obj.get("name", "NPC"),
+                    "dialog": list(obj.get("dialog") or ["..."]),
+                })
+            elif t == "teleport":
+                self.teleports.append({
+                    "x": obj["x"],
+                    "y": obj["y"],
+                    "target_x": obj.get("target_x", obj["x"] + 200),
+                    "target_y": obj.get("target_y", obj["y"]),
+                })
+
+        # Старый одиночный extra_life — если в уровне нет пикапов этого типа
+        lives = [p for p in self.level_pickups if p["type"] == "extra_life"]
+        if lives:
+            self.extra_life_podobran = False
+            self.extra_lifex = lives[0]["x"]
+            self.extra_lifey = lives[0]["y"]
+        else:
+            self.extra_life_podobran = True
