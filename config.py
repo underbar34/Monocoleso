@@ -1,4 +1,4 @@
-# config.pу
+# config.py
 import pygame
 
 # Размеры окна
@@ -11,21 +11,29 @@ FPS = 60
 # Задержка атаки (1/3 секунды)
 ATAKA_ZADERZHKA = FPS // 3
 
-# Рывок
-RYVOK_VREMYA = int(FPS * 0.3)
-RYVOK_SPEED = 11
-RYVOK_ZADERZHKA = int(FPS * 0.5)
-RYVOK_V_VOZDUHE_MAX = 2
-
-# Плащик: заморозка после подбора (1.2 сек)
-PLASHIK_ZAMOROZKA = int(FPS * 1.2)
-
 # Гравитация
 GRAVITI = 1.3
 
-# Скорости (подогнаны под 60 FPS, поведение как на 30)
-SPEED_PLAYER = 2.5
-SPEED_PLAYER_Y = 5
+# Скорости
+SPEED_PLAYER = 5.5
+SPEED_PLAYER_Y = 6.5
+JUMP_FORCE = -3.0
+JUMP_HOLD_MAX = 22
+JUMP_HOLD_BOOST = 0.1
+JUMP_CUT_MULT = 0.4
+GRAVITY_AIR = 0.14
+FALL_SPEED_MAX = 1.6
+PLAYER_ACCEL = 1.0
+PLAYER_FRICTION = 0.78
+SPRINT_MULT = 2.0
+
+# Отбрасывание при попадании по боссу
+KNOCKBACK_SIDE = 4.5
+KNOCKBACK_VERTICAL = 2.0
+KNOCKBACK_UP = 2.0
+KNOCKBACK_UP_MULT = 1.2
+KNOCKBACK_BLEND = 0.22
+KNOCKBACK_DECAY = 0.84
 
 # Таймер прыжка в кадрах
 JUMP_TIMER_MAX = 30
@@ -36,6 +44,24 @@ ATAKA_KADRY = 10
 # Земля по умолчанию
 GROUND_Y = 726
 
+# Размер мира
+WORLD_WIDTH = 6200
+
+# Босс — холодос
+BOSS_MAX_HP = 600
+BOSS_DAMAGE = 30
+BOSS_X = 3800
+BOSS_Y = 233
+BOSS_W = 423
+BOSS_H = 477
+BOSS_ARENA_X = 2500
+BOSS_MIN_X = 2700
+BOSS_MAX_X = 5000
+BOSS_SPEED = 1.8
+BOSS_SPEED_PHASE2 = 3.2
+BOSS_HIT_COOLDOWN = 15
+BOSS_CONTACT_DAMAGE = 1
+
 # Здоровье
 HEALTH_MAX = 5
 
@@ -45,7 +71,7 @@ NEUYAZVIMOST_MAX = 60
 # Акум
 MAX_AKUM_POWER = 5
 
-# Загрузка изображений
+
 def load_images():
     images = {}
     images['player'] = pygame.image.load("Assets/Tems/Tems(stoit1).png")
@@ -66,18 +92,45 @@ def load_images():
     images['playerstoit1'] = pygame.image.load("Assets/Tems/Tems(stoit1).png")
     images['playerstoit2'] = pygame.image.load("Assets/Tems/Tems(stoit2).png")
     images['platform'] = pygame.image.load("Assets/locat/platform.png")
-    # Плащик — простой квадратик
-    plashik = pygame.Surface((28, 28))
-    plashik.fill((40, 160, 200))
-    images['plashik'] = plashik
+
+    for i in range(1, 5):
+        raw = pygame.image.load(f"Assets/holodos/holodos{i}.png")
+        h = 477
+        w = int(raw.get_width() * h / raw.get_height())
+        images[f"holodos{i}"] = pygame.transform.scale(raw, (w, h))
+
+    for i in range(1, 4):
+        raw = pygame.image.load(f"Assets/holodos/holodosymer{i}.png")
+        h = 477
+        w = int(raw.get_width() * h / raw.get_height())
+        images[f"holodos_dead{i}"] = pygame.transform.scale(raw, (w, h))
+
+    extra_life = pygame.Surface((28, 28))
+    extra_life.fill((76, 175, 80))
+    images['extra_life'] = extra_life
+
+    sprint_skill = pygame.Surface((28, 28))
+    sprint_skill.fill((156, 39, 176))
+    images['sprint_skill'] = sprint_skill
+
+    coin = pygame.Surface((20, 20), pygame.SRCALPHA)
+    pygame.draw.circle(coin, (255, 215, 0), (10, 10), 10)
+    pygame.draw.circle(coin, (255, 180, 0), (10, 10), 7)
+    images['coin'] = coin
+
+    snowflake = pygame.Surface((16, 16), pygame.SRCALPHA)
+    pygame.draw.circle(snowflake, (200, 230, 255), (8, 8), 7)
+    pygame.draw.circle(snowflake, (255, 255, 255), (8, 8), 4)
+    images['snowflake'] = snowflake
+
     return images
 
-# Игровые переменные
+
 class GameState:
     def __init__(self, images):
         self.player = images['player']
-        self.playerx = 300
-        self.playery = 200
+        self.playerx = 120
+        self.playery = 640
         self.y_vel = 0
         self.y_veling = 0
         self.opuskatsa = 0
@@ -87,8 +140,14 @@ class GameState:
         self.otpuskal = True
         self.playermovex = 0
         self.playermovey = 0
+        self.x_vel = 0
+        self.kb_vx = 0.0
+        self.kb_vy = 0.0
+        self.prev_space = False
+        self.jump_holding = False
+        self.jump_hold_timer = 0
         self.health = 4
-        self.neuyazvimost = 0
+        self.neuyazvimost = NEUYAZVIMOST_MAX
         self.atakapl = False
         self.flagatak = 0
         self.vrematakpl = 0
@@ -100,15 +159,33 @@ class GameState:
         self.akum = images['akum0']
         self.images = images
         self.lookdir = 1
-        # Плащик на платформе справа (не стартовая)
-        self.plashik_podobran = False
-        self.plashikx = 930
-        self.plashiky = 460
-        self.plashik_zamorozka = 0
-        # Рывок
-        self.ryvok = False
-        self.ryvok_timer = 0
-        self.ryvok_dir = 1
-        self.ryvok_zaderzhka = 0
-        self.ryvok_vozduh = 0
-        self.shift_derzali = False
+
+        # Доп. жизнь
+        self.extra_life_podobran = False
+        self.extra_lifex = 125
+        self.extra_lifey = 10
+
+        # Абилка спринта (выпадает с босса)
+        self.sprint_unlocked = False
+        self.sprint_podobran = False
+        self.sprint_pickup = None
+
+        # Босс
+        self.boss_alive = True
+        self.boss_x = BOSS_X
+        self.boss_y = BOSS_Y
+        self.boss_hp = BOSS_MAX_HP
+        self.boss_phase = 1
+        self.boss_anim = 0
+        self.boss_move = None
+        self.boss_move_timer = 0
+        self.boss_idle_timer = 90
+        self.boss_last_move = -1
+        self.boss_shake = 0
+        self.boss_dying = False
+        self.boss_death_timer = 0
+        self.boss_hit_cooldown = 0
+        self.boss_attack_hit = False
+        self.snowflakes = []
+        self.coins = []
+        self.loot_spawned = False

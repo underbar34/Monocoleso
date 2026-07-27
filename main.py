@@ -3,7 +3,10 @@ import pygame
 import sys
 from config import WIDTH, HEIGHT, FPS, load_images, GameState
 from platforms import create_platforms
-from logic import update_akum, get_ground_y, update_player_movement, handle_events, update_plashik
+from logic import (
+    update_akum, get_ground_y, update_player_movement, handle_events,
+    update_extra_life, update_boss, update_loot,
+)
 from render import render
 from motion_blur import MotionBlur
 from menu import run_menu
@@ -24,12 +27,11 @@ def run_game(screen, clock):
     # Игровой цикл
     game_run = True
     while game_run:
-        # Обработка событий
-        for event in pygame.event.get():
+        events = pygame.event.get()
+        for event in events:
             if event.type == pygame.QUIT:
                 game_run = False
         
-        # Получение нажатых клавиш
         keys = pygame.key.get_pressed()
         
         # Обновление акума
@@ -38,11 +40,13 @@ def run_game(screen, clock):
         # Получение высоты земли
         ground_y = get_ground_y(pls, state.playerx, state.playery)
         
-        # Подбор плащика
-        update_plashik(state)
+        # Подбор плащика и доп. жизни
+        update_extra_life(state)
+        update_boss(state)
+        update_loot(state)
         
         # Обработка событий клавиатуры
-        handle_events(state, keys, ground_y)
+        handle_events(state, keys, ground_y, events)
         
         # Обновление движения игрока
         update_player_movement(state, keys, ground_y)

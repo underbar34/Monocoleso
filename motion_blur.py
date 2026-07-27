@@ -19,7 +19,7 @@ class MotionBlur:
             while len(self.trail) > 3:
                 self.trail.pop(0)
 
-    def draw(self, screen):
+    def draw(self, screen, cam_x=0):
         total = len(self.trail)
         if total < 2:
             return
@@ -31,7 +31,7 @@ class MotionBlur:
                 alpha = int(20 + 40 * t)
             ghost = image.convert_alpha()
             ghost.set_alpha(alpha)
-            screen.blit(ghost, (x, y))
+            screen.blit(ghost, (x - cam_x, y))
 
     def clear(self):
         self.trail.clear()
