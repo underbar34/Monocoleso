@@ -40,7 +40,7 @@ def run_game(screen, clock, level_path=DEFAULT_LEVEL_PATH):
         update_loot(state)
         update_interactions(state)
         handle_events(state, keys, ground_y, events)
-        update_player_movement(state, keys, ground_y, walls)
+        update_player_movement(state, keys, ground_y, walls, pls)
         render(screen, state, pls, ground_y, blur, walls)
 
         if state.health <= 0:

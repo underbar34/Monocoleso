@@ -14,6 +14,7 @@ from config import (
     PLAYER_ACCEL, PLAYER_FRICTION, SPRINT_MULT,
     DASH_DURATION, DASH_SPEED, DASH_COOLDOWN,
     PLAYER_W, PLAYER_H,
+    MAX_AKUM_POWER,
 )
 from level_loader import boss_drop, ABILITY_CATALOG
 
@@ -58,6 +59,20 @@ def resolve_walls(state, walls, axis):
                 state.playery = wr.bottom
                 state.playermovey = 0
             pr.y = int(state.playery)
+
+
+def resolve_platforms(state, pls):
+    """Блокирует проход сквозь платформы снизу при прыжке вверх."""
+    if not pls or state.playermovey >= 0:
+        return
+    pr = _player_hitbox(state)
+    for pl in pls:
+        plr = pygame.Rect(*pl.rect())
+        if not pr.colliderect(plr):
+            continue
+        state.playery = plr.bottom
+        state.playermovey = 0
+        pr.y = int(state.playery)
 
 
 def _pickup_collision(px, py, cx, cy, size=28):
@@ -131,6 +146,32 @@ def _aim_at_player(state, speed, spread=0.0):
 def _boss_in_arena(state):
     arena = getattr(state, "boss_arena_x", BOSS_ARENA_X)
     return state.playerx >= arena - 200
+
+
+def _update_boss_arena_lock(state):
+    if not state.boss_alive or state.boss_dying:
+        state.boss_arena_locked = False
+        return
+    if _boss_in_arena(state):
+        state.boss_arena_locked = True
+
+
+def _clamp_boss_arena(state):
+    """Не даёт покинуть арену, пока босс жив или умирает."""
+    _update_boss_arena_lock(state)
+    if not state.boss_arena_locked:
+        return
+    arena = getattr(state, "boss_arena_x", BOSS_ARENA_X)
+    left = arena - 200
+    right = getattr(state, "boss_max_x", BOSS_MAX_X) - PLAYER_W
+    if state.playerx < left:
+        state.playerx = left
+        state.x_vel = 0
+        state.kb_vx = 0
+    elif state.playerx > right:
+        state.playerx = right
+        state.x_vel = 0
+        state.kb_vx = 0
 
 
 def _boss_start_move(state, move_id):
@@ -334,6 +375,7 @@ def update_boss(state):
         state.boss_death_timer += 1
         if state.boss_death_timer >= 90:
             state.boss_alive = False
+            state.boss_dying = False
             _spawn_boss_loot(state)
         return
 
@@ -428,6 +470,7 @@ def update_boss_combat(state):
         if state.boss_hp <= 0:
             state.boss_dying = True
             state.boss_death_timer = 0
+        _charge_akum(state)
 
 
 def update_loot(state):
@@ -463,10 +506,16 @@ def update_loot(state):
                 _grant_ability(state, "sprint")
 
 
+def _charge_akum(state):
+    """+1 полоска за удар (0..MAX_AKUM_POWER)."""
+    if state.akumpower >= MAX_AKUM_POWER:
+        return
+    state.akumpower += 1
+
+
 def update_akum(state):
-    power = state.akumpower
     keys = ['akum0', 'akum1', 'akum2', 'akum3', 'akum4', 'akum5']
-    state.akum = state.images[keys[min(power, 5)]]
+    state.akum = state.images[keys[min(state.akumpower, MAX_AKUM_POWER)]]
 
 
 _NO_GROUND = 10 ** 9
@@ -627,14 +676,15 @@ def try_interact(state):
         _start_dialog(state, npc)
         return
 
-    if state.akumpower == 5:
+    if state.akumpower >= MAX_AKUM_POWER:
         state.akumpower = 0
-        if state.health <= HEALTH_MAX:
+        if state.health < HEALTH_MAX:
             state.health += 1
 
 
-def update_player_movement(state, keys, ground_y, walls=None):
+def update_player_movement(state, keys, ground_y, walls=None, pls=None):
     walls = walls or []
+    pls = pls or []
     if state.boss_shake > 0 and state.boss_move != 5:
         state.boss_shake = max(0, state.boss_shake - 1)
 
@@ -650,6 +700,7 @@ def update_player_movement(state, keys, ground_y, walls=None):
         on_ground = ground_y is not None and _on_ground(state, ground_y)
         if on_ground:
             _apply_ground(state, ground_y)
+        _clamp_boss_arena(state)
         return
 
     # Рывок: очень быстрый горизонтальный сдвиг ~0.3 с
@@ -665,12 +716,14 @@ def update_player_movement(state, keys, ground_y, walls=None):
             state.playermovey = min(state.playermovey + GRAVITY_AIR * 0.35, FALL_SPEED_MAX * 0.4)
             state.playery += state.playermovey * SPEED_PLAYER_Y
             resolve_walls(state, walls, "y")
+            resolve_platforms(state, pls)
             if ground_y is not None and state.playery > ground_y:
                 _apply_ground(state, ground_y)
         if state.dash_timer <= 0:
             state.x_vel *= 0.35
             state.dash_cooldown = DASH_COOLDOWN
         _fall_death(state)
+        _clamp_boss_arena(state)
         return
 
     _update_knockback(state)
@@ -745,10 +798,12 @@ def update_player_movement(state, keys, ground_y, walls=None):
 
     state.playery += state.playermovey * SPEED_PLAYER_Y
     resolve_walls(state, walls, "y")
+    resolve_platforms(state, pls)
     if ground_y is not None and state.playery > ground_y:
         state.playery = ground_y
         state.playermovey = 0
     _fall_death(state)
+    _clamp_boss_arena(state)
 
 
 def handle_events(state, keys, ground_y, events=()):

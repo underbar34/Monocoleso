@@ -1,12 +1,17 @@
 # platforms.py
 from config import WALL_W, WALL_H
 
+PLATFORM_H = 20
+
 
 class Platform:
     def __init__(self, x, y):
         self.x = x
         self.y = y
         self.shir = 105
+
+    def rect(self):
+        return (self.x, self.y, self.shir, PLATFORM_H)
 
     def pup(self, px, py, ground_y):
         if self.x - 50 <= px <= self.x + self.shir and self.y - 50 > py > self.y - 100:

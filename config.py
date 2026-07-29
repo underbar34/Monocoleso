@@ -174,7 +174,7 @@ class GameState:
         self.atakax = -1000
         self.giznx = 100
         self.gizny = 2
-        self.akumpower = 5
+        self.akumpower = 0
         self.akum = images['akum0']
         self.images = images
         self.lookdir = 1
@@ -217,6 +217,7 @@ class GameState:
         self.boss_death_timer = 0
         self.boss_hit_cooldown = 0
         self.boss_attack_hit = False
+        self.boss_arena_locked = False
         self.snowflakes = []
         self.coins = []
         self.loot_spawned = False
@@ -263,6 +264,7 @@ class GameState:
                 self.boss_hp = BOSS_MAX_HP
                 self.boss_phase = 1
                 self.boss_dying = False
+                self.boss_arena_locked = False
                 self.loot_spawned = False
                 if hasattr(self, "_boss_base_y"):
                     del self._boss_base_y
