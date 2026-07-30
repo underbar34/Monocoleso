@@ -172,10 +172,6 @@
       "y": -185
     },
     {
-      "x": 1690,
-      "y": -315
-    },
-    {
       "x": 1480,
       "y": -480
     },
@@ -414,6 +410,11 @@
     {
       "x": 8185,
       "y": -925
+    },
+    {
+      "x": 1720,
+      "y": -310,
+      "texture": "Assets/locat/platform.png"
     }
   ],
   "world_height": 2000,
@@ -628,7 +629,8 @@
     {
       "type": "extra_life",
       "x": 650,
-      "y": -805
+      "y": -805,
+      "texture": "Assets/bg/hilka.png"
     },
     {
       "type": "npc",
@@ -655,7 +657,268 @@
       "y": -500,
       "arena_x": 2080,
       "min_x": 1720,
-      "max_x": 4020
+      "max_x": 4020,
+      "moveset": {
+        "phases": [
+          {
+            "hp_below": 1.0,
+            "idle": 90,
+            "moves": [
+              "aim_missile",
+              "side_slash"
+            ]
+          },
+          {
+            "hp_below": 0.66,
+            "idle": 55,
+            "moves": [
+              "aim_missile",
+              "ice_trap",
+              "double_slash",
+              "melee_swipe"
+            ]
+          },
+          {
+            "hp_below": 0.33,
+            "idle": 30,
+            "moves": [
+              "rage_combo",
+              "ice_trap",
+              "missile_fan",
+              "melee_swipe"
+            ]
+          }
+        ],
+        "moves": {
+          "aim_missile": {
+            "duration": 70,
+            "events": [
+              {
+                "frame": 8,
+                "action": "set_sprite",
+                "sprite": "attack_right"
+              },
+              {
+                "frame": 36,
+                "action": "missile",
+                "mode": "aim",
+                "speed": 5.5,
+                "count": 1
+              },
+              {
+                "frame": 52,
+                "action": "set_sprite",
+                "sprite": "idle"
+              }
+            ]
+          },
+          "side_slash": {
+            "duration": 65,
+            "events": [
+              {
+                "frame": 10,
+                "action": "set_sprite",
+                "sprite": "attack_left"
+              },
+              {
+                "frame": 28,
+                "action": "slash_proj",
+                "side": "auto",
+                "speed": 7.5
+              },
+              {
+                "frame": 45,
+                "action": "set_sprite",
+                "sprite": "idle"
+              }
+            ]
+          },
+          "ice_trap": {
+            "duration": 80,
+            "events": [
+              {
+                "frame": 5,
+                "action": "shake",
+                "amount": 4,
+                "frames": 15
+              },
+              {
+                "frame": 20,
+                "action": "set_sprite",
+                "sprite": "attack_left2"
+              },
+              {
+                "frame": 35,
+                "action": "ice_rise",
+                "target": "player",
+                "offset_x": 0,
+                "lifetime": 100
+              },
+              {
+                "frame": 55,
+                "action": "set_sprite",
+                "sprite": "idle"
+              }
+            ]
+          },
+          "double_slash": {
+            "duration": 85,
+            "events": [
+              {
+                "frame": 8,
+                "action": "set_sprite",
+                "sprite": "attack_left"
+              },
+              {
+                "frame": 22,
+                "action": "slash_proj",
+                "side": "left",
+                "speed": 8.0
+              },
+              {
+                "frame": 40,
+                "action": "set_sprite",
+                "sprite": "attack_right"
+              },
+              {
+                "frame": 52,
+                "action": "slash_proj",
+                "side": "right",
+                "speed": 8.0
+              },
+              {
+                "frame": 68,
+                "action": "set_sprite",
+                "sprite": "idle"
+              }
+            ]
+          },
+          "melee_swipe": {
+            "duration": 70,
+            "events": [
+              {
+                "frame": 5,
+                "action": "set_sprite",
+                "sprite": "attack_left"
+              },
+              {
+                "frame": 18,
+                "action": "melee",
+                "side": "auto",
+                "atk_frame": "1",
+                "duration": 16
+              },
+              {
+                "frame": 36,
+                "action": "set_sprite",
+                "sprite": "attack_left2"
+              },
+              {
+                "frame": 42,
+                "action": "melee",
+                "side": "auto",
+                "atk_frame": "2",
+                "duration": 14
+              },
+              {
+                "frame": 58,
+                "action": "set_sprite",
+                "sprite": "idle"
+              }
+            ]
+          },
+          "missile_fan": {
+            "duration": 75,
+            "events": [
+              {
+                "frame": 10,
+                "action": "set_sprite",
+                "sprite": "attack_right2"
+              },
+              {
+                "frame": 28,
+                "action": "missile",
+                "mode": "spread",
+                "speed": 5.0,
+                "count": 5,
+                "spread_deg": 55
+              },
+              {
+                "frame": 48,
+                "action": "missile",
+                "mode": "aim",
+                "speed": 6.5,
+                "count": 1
+              },
+              {
+                "frame": 60,
+                "action": "set_sprite",
+                "sprite": "idle"
+              }
+            ]
+          },
+          "rage_combo": {
+            "duration": 110,
+            "events": [
+              {
+                "frame": 1,
+                "action": "shake",
+                "amount": 8,
+                "frames": 25
+              },
+              {
+                "frame": 12,
+                "action": "set_sprite",
+                "sprite": "attack_right"
+              },
+              {
+                "frame": 22,
+                "action": "missile",
+                "mode": "ring",
+                "speed": 4.5,
+                "count": 8
+              },
+              {
+                "frame": 40,
+                "action": "set_sprite",
+                "sprite": "attack_left"
+              },
+              {
+                "frame": 48,
+                "action": "melee",
+                "side": "auto",
+                "atk_frame": "1",
+                "duration": 18
+              },
+              {
+                "frame": 58,
+                "action": "ice_rise",
+                "target": "player",
+                "offset_x": -80,
+                "lifetime": 80
+              },
+              {
+                "frame": 62,
+                "action": "ice_rise",
+                "target": "player",
+                "offset_x": 80,
+                "lifetime": 80
+              },
+              {
+                "frame": 78,
+                "action": "slash_proj",
+                "side": "auto",
+                "speed": 9.0
+              },
+              {
+                "frame": 90,
+                "action": "set_sprite",
+                "sprite": "idle"
+              }
+            ]
+          }
+        }
+      }
     }
   ]
 }
