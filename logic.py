@@ -1,6 +1,5 @@
 # logic.py
 import math
-import random
 import pygame
 from config import (
     GROUND_Y, SPEED_PLAYER, SPEED_PLAYER_Y, ATAKA_ZADERZHKA,
@@ -8,7 +7,7 @@ from config import (
     GRAVITY_AIR, FALL_SPEED_MAX, WIDTH, HEIGHT, WORLD_WIDTH, HEALTH_MAX,
     NEUYAZVIMOST_MAX, BOSS_MAX_HP, BOSS_DAMAGE, BOSS_X, BOSS_Y,
     BOSS_W, BOSS_H, BOSS_ARENA_X, BOSS_MIN_X, BOSS_MAX_X,
-    BOSS_SPEED, BOSS_SPEED_PHASE2, BOSS_HIT_COOLDOWN, BOSS_CONTACT_DAMAGE,
+    BOSS_SPEED, BOSS_SPEED_PHASE2, BOSS_SPEED_PHASE3, BOSS_HIT_COOLDOWN, BOSS_CONTACT_DAMAGE,
     KNOCKBACK_SIDE, KNOCKBACK_VERTICAL, KNOCKBACK_UP, KNOCKBACK_UP_MULT,
     KNOCKBACK_BLEND, KNOCKBACK_DECAY, KNOCKBACK_RISE_MAX,
     PLAYER_ACCEL, PLAYER_FRICTION, SPRINT_MULT,
@@ -17,6 +16,10 @@ from config import (
     MAX_AKUM_POWER,
 )
 from level_loader import boss_drop, ABILITY_CATALOG
+from boss_moves import (
+    apply_event, phase_index_for_hp, pick_move_name,
+    default_holodos_moveset,
+)
 
 
 def get_camera_x(state):
@@ -131,7 +134,11 @@ def _attack_rect(state):
 
 
 def _spawn_snowflake(state, x, y, vx, vy):
-    state.snowflakes.append({"x": x, "y": y, "vx": vx, "vy": vy})
+    """Legacy helper — пишет в boss_projectiles как missile."""
+    state.boss_projectiles.append({
+        "kind": "missile", "x": x, "y": y, "vx": vx, "vy": vy,
+        "life": 300, "damage": 1, "w": 36, "h": 64, "sprite": "boegolovka",
+    })
 
 
 def _aim_at_player(state, speed, spread=0.0):
@@ -174,110 +181,137 @@ def _clamp_boss_arena(state):
         state.kb_vx = 0
 
 
-def _boss_start_move(state, move_id):
-    state.boss_move = move_id
+def _boss_moveset(state):
+    ms = getattr(state, "boss_moveset", None)
+    if not ms:
+        ms = default_holodos_moveset()
+        state.boss_moveset = ms
+    return ms
+
+
+def _boss_refresh_phase(state):
+    ms = _boss_moveset(state)
+    ratio = max(0.0, state.boss_hp / BOSS_MAX_HP)
+    idx, ph = phase_index_for_hp(ms, ratio)
+    state.boss_phase = idx + 1
+    return ph
+
+
+def _boss_start_move(state, move_name):
+    state.boss_move = move_name
     state.boss_move_timer = 0
     state.boss_anim = 0
+    state.boss_sprite_mode = "idle"
 
 
-def _boss_shoot_aim(state, speed=5.0):
-    vx, vy = _aim_at_player(state, speed)
-    bx, by = _boss_center(state)
-    _spawn_snowflake(state, bx, by, vx, vy)
-
-
-def _boss_shoot_spread(state, count, speed, spread_deg=30):
-    bx, by = _boss_center(state)
-    base = math.atan2(state.playery + 25 - by, state.playerx + 20 - bx)
-    step = math.radians(spread_deg) / max(count - 1, 1)
-    start = base - math.radians(spread_deg) / 2
-    for i in range(count):
-        a = start + step * i
-        _spawn_snowflake(state, bx, by, speed * math.cos(a), speed * math.sin(a))
-
-
-def _boss_shoot_rain(state, count, speed=4.0):
-    for _ in range(count):
-        x = state.boss_x + random.randint(40, BOSS_W - 40)
-        _spawn_snowflake(state, x, state.boss_y + 20, random.uniform(-1, 1), speed)
-
-
-def _boss_shoot_ring(state, count, speed):
-    bx, by = _boss_center(state)
-    for i in range(count):
-        a = 2 * math.pi * i / count
-        _spawn_snowflake(state, bx, by, speed * math.cos(a), speed * math.sin(a))
+def _boss_finish_move(state):
+    ph = _boss_refresh_phase(state)
+    state.boss_move = None
+    state.boss_idle_timer = int(ph.get("idle", 60))
+    state.boss_sprite_mode = "idle"
+    state.boss_shake = 0
 
 
 def _boss_pick_move(state):
-    phase = state.boss_phase
-    options = list(range(3))
-    if state.boss_last_move in options and len(options) > 1:
-        options.remove(state.boss_last_move)
-    move = random.choice(options)
-    state.boss_last_move = move
-    _boss_start_move(state, move + (0 if phase == 1 else 3))
+    ms = _boss_moveset(state)
+    ph = _boss_refresh_phase(state)
+    name = pick_move_name(ms, ph, state.boss_last_move)
+    if name is None:
+        state.boss_idle_timer = int(ph.get("idle", 60))
+        return
+    state.boss_last_move = name
+    _boss_start_move(state, name)
 
 
 def _boss_update_move(state):
-    move = state.boss_move
-    if move is None:
+    move_name = state.boss_move
+    if move_name is None:
+        return
+
+    ms = _boss_moveset(state)
+    move = (ms.get("moves") or {}).get(move_name)
+    if not move:
+        _boss_finish_move(state)
         return
 
     state.boss_move_timer += 1
     state.boss_anim = (state.boss_anim + 1) % 30
+    t = state.boss_move_timer
 
-    # Фаза 1
-    if move == 0:
-        if state.boss_move_timer == 40:
-            _boss_shoot_aim(state, 5.0)
-        if state.boss_move_timer >= 70:
-            state.boss_move = None
-            state.boss_idle_timer = 60
-
-    elif move == 1:
-        if state.boss_move_timer == 35:
-            _boss_shoot_spread(state, 3, 4.5, 40)
-        if state.boss_move_timer >= 75:
-            state.boss_move = None
-            state.boss_idle_timer = 70
-
-    elif move == 2:
-        if state.boss_move_timer in (30, 45, 60):
-            _boss_shoot_rain(state, 3, 4.0)
-        if state.boss_move_timer >= 90:
-            state.boss_move = None
-            state.boss_idle_timer = 80
-
-    # Фаза 2
-    elif move == 3:
-        if state.boss_move_timer in (25, 40):
-            _boss_shoot_aim(state, 7.0)
-            _boss_shoot_aim(state, 6.5)
-        if state.boss_move_timer >= 65:
-            state.boss_move = None
-            state.boss_idle_timer = 45
-
-    elif move == 4:
-        if state.boss_move_timer == 30:
-            _boss_shoot_ring(state, 8, 4.5)
-        if state.boss_move_timer == 50:
-            _boss_shoot_ring(state, 8, 5.5)
-        if state.boss_move_timer >= 85:
-            state.boss_move = None
-            state.boss_idle_timer = 50
-
-    elif move == 5:
-        if state.boss_move_timer < 20:
-            state.boss_shake = int(math.sin(state.boss_move_timer * 0.8) * 6)
-        elif state.boss_move_timer == 25:
-            _boss_shoot_ring(state, 12, 5.0)
-        elif state.boss_move_timer == 40:
-            _boss_shoot_spread(state, 5, 6.0, 70)
-        elif state.boss_move_timer >= 75:
+    if getattr(state, "boss_shake_timer", 0) > 0:
+        state.boss_shake_timer -= 1
+        if state.boss_shake_timer <= 0:
             state.boss_shake = 0
-            state.boss_move = None
-            state.boss_idle_timer = 55
+
+    for ev in move.get("events") or []:
+        if int(ev.get("frame", -1)) == t:
+            if apply_event(state, ev):
+                _boss_finish_move(state)
+                return
+
+    duration = int(move.get("duration", 90))
+    if t >= duration:
+        _boss_finish_move(state)
+
+
+def _update_boss_projectiles(state):
+    world_w = getattr(state, "world_width", WORLD_WIDTH)
+    world_top = getattr(state, "world_top", -400)
+    alive = []
+    for p in getattr(state, "boss_projectiles", []) or []:
+        if p["kind"] == "ice" and p.get("rising", 0) > 0:
+            p["y"] -= 3
+            p["rising"] -= 1
+        else:
+            p["x"] += p.get("vx", 0)
+            p["y"] += p.get("vy", 0)
+        p["life"] = p.get("life", 300) - 1
+        if p["life"] <= 0:
+            continue
+        if p["kind"] != "ice":
+            if not (-80 < p["x"] < world_w + 80 and world_top - 80 < p["y"] < HEIGHT + 400):
+                continue
+        alive.append(p)
+    state.boss_projectiles = alive
+    state.snowflakes = []  # legacy cleared
+
+
+def _boss_projectile_rect(p):
+    return pygame.Rect(int(p["x"]), int(p["y"]), int(p.get("w", 24)), int(p.get("h", 24)))
+
+
+def _update_boss_hazards(state):
+    """Урон от снарядов и melee-хитбокса."""
+    if state.neuyazvimost < NEUYAZVIMOST_MAX:
+        return
+
+    pr = _player_rect(state)
+
+    melee = getattr(state, "boss_melee", None)
+    if melee:
+        melee["life"] -= 1
+        mr = pygame.Rect(int(melee["x"]), int(melee["y"]), int(melee["w"]), int(melee["h"]))
+        if pr.colliderect(mr):
+            _damage_player(state, int(melee.get("damage", 1)))
+        if melee["life"] <= 0:
+            state.boss_melee = None
+
+    if state.neuyazvimost < NEUYAZVIMOST_MAX:
+        return
+
+    hit_idx = None
+    for i, p in enumerate(state.boss_projectiles):
+        if pr.colliderect(_boss_projectile_rect(p)):
+            hit_idx = i
+            dmg = int(p.get("damage", 1))
+            break
+    if hit_idx is not None:
+        _damage_player(state, dmg)
+        # лёд не удаляем сразу — зона урона; ракеты/slash — да
+        if state.boss_projectiles[hit_idx]["kind"] != "ice":
+            del state.boss_projectiles[hit_idx]
+    else:
+        _boss_contact_damage(state)
 
 
 def _spawn_boss_loot(state):
@@ -329,15 +363,23 @@ def _grant_ability(state, ability_id):
         state.dash_unlocked = True
 
 
+def _boss_speed(state):
+    if state.boss_phase >= 3:
+        return BOSS_SPEED_PHASE3
+    if state.boss_phase >= 2:
+        return BOSS_SPEED_PHASE2
+    return BOSS_SPEED
+
+
 def _update_boss_position(state):
     if not state.boss_alive or state.boss_dying:
         return
     if not _boss_in_arena(state):
         return
 
-    speed = BOSS_SPEED_PHASE2 if state.boss_phase == 2 else BOSS_SPEED
-    if state.boss_move == 5 and state.boss_move_timer < 20:
-        speed *= 2.2
+    speed = _boss_speed(state)
+    if getattr(state, "boss_shake_timer", 0) > 10:
+        speed *= 1.5
 
     target_x = state.playerx + 20 - BOSS_W // 2
     min_x = getattr(state, "boss_min_x", BOSS_MIN_X)
@@ -352,10 +394,10 @@ def _update_boss_position(state):
     if not hasattr(state, "_boss_base_y"):
         state._boss_base_y = state.boss_y
     base_y = state._boss_base_y
-    if state.boss_phase == 2:
-        state.boss_y = base_y + int(math.sin(state.boss_anim * 0.15) * 12)
-    else:
-        state.boss_y = base_y
+    bob = 0
+    if state.boss_phase >= 2:
+        bob = int(math.sin(state.boss_anim * 0.15) * (10 + 4 * (state.boss_phase - 1)))
+    state.boss_y = base_y + bob
 
 
 def _boss_contact_damage(state):
@@ -385,8 +427,7 @@ def update_boss(state):
     if not _boss_in_arena(state):
         return
 
-    if state.boss_hp <= BOSS_MAX_HP // 2:
-        state.boss_phase = 2
+    _boss_refresh_phase(state)
 
     if state.boss_move is None:
         state.boss_idle_timer -= 1
@@ -396,31 +437,8 @@ def update_boss(state):
         _boss_update_move(state)
 
     _update_boss_position(state)
-
-    # Снежинки
-    for sf in state.snowflakes:
-        sf["x"] += sf["vx"]
-        sf["y"] += sf["vy"]
-    world_w = getattr(state, "world_width", WORLD_WIDTH)
-    state.snowflakes = [
-        sf for sf in state.snowflakes
-        if -50 < sf["x"] < world_w + 50 and -50 < sf["y"] < HEIGHT + 50
-    ]
-
-    # Урон игроку от снежинок и касания босса
-    if state.neuyazvimost >= NEUYAZVIMOST_MAX:
-        pr = _player_rect(state)
-        hit_idx = None
-        for i, sf in enumerate(state.snowflakes):
-            sr = pygame.Rect(sf["x"] - 8, sf["y"] - 8, 16, 16)
-            if pr.colliderect(sr):
-                hit_idx = i
-                break
-        if hit_idx is not None:
-            _damage_player(state, 1)
-            del state.snowflakes[hit_idx]
-        else:
-            _boss_contact_damage(state)
+    _update_boss_projectiles(state)
+    _update_boss_hazards(state)
 
 
 def _apply_attack_knockback(state):
@@ -685,7 +703,7 @@ def try_interact(state):
 def update_player_movement(state, keys, ground_y, walls=None, pls=None):
     walls = walls or []
     pls = pls or []
-    if state.boss_shake > 0 and state.boss_move != 5:
+    if state.boss_shake > 0 and getattr(state, "boss_shake_timer", 0) <= 0:
         state.boss_shake = max(0, state.boss_shake - 1)
 
     if state.dash_cooldown > 0 and state.dash_timer <= 0:

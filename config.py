@@ -72,7 +72,8 @@ BOSS_ARENA_X = 2500
 BOSS_MIN_X = 2700
 BOSS_MAX_X = 5000
 BOSS_SPEED = 1.8
-BOSS_SPEED_PHASE2 = 3.2
+BOSS_SPEED_PHASE2 = 2.5
+BOSS_SPEED_PHASE3 = 3.4
 BOSS_HIT_COOLDOWN = 15
 BOSS_CONTACT_DAMAGE = 1
 
@@ -119,6 +120,26 @@ def load_images():
         h = 477
         w = int(raw.get_width() * h / raw.get_height())
         images[f"holodos_dead{i}"] = pygame.transform.scale(raw, (w, h))
+
+    def _load_holodos(name, key, max_h=None, max_w=None):
+        raw = pygame.image.load(f"Assets/holodos/{name}.png")
+        w, h = raw.get_size()
+        if max_h and h > max_h:
+            w = int(w * max_h / h)
+            h = max_h
+        if max_w and w > max_w:
+            h = int(h * max_w / w)
+            w = max_w
+        images[key] = pygame.transform.scale(raw, (w, h))
+
+    _load_holodos("atakauslevy1", "holodos_atk_left1", max_h=320)
+    _load_holodos("atakauslevy2", "holodos_atk_left2", max_h=400)
+    _load_holodos("atakauspravy1", "holodos_atk_right1", max_h=320)
+    _load_holodos("atakauspravy2", "holodos_atk_right2", max_h=400)
+    _load_holodos("prostouslevy", "holodos_slash_left", max_h=60, max_w=200)
+    _load_holodos("prostouspravy", "holodos_slash_right", max_h=60, max_w=200)
+    _load_holodos("ledholodosnis", "holodos_ice", max_h=48, max_w=320)
+    _load_holodos("boegolovka", "boegolovka", max_h=90)
 
     extra_life = pygame.Surface((28, 28))
     extra_life.fill((76, 175, 80))
@@ -218,7 +239,12 @@ class GameState:
         self.boss_hit_cooldown = 0
         self.boss_attack_hit = False
         self.boss_arena_locked = False
-        self.snowflakes = []
+        self.boss_moveset = None
+        self.boss_sprite_mode = "idle"
+        self.boss_shake_timer = 0
+        self.boss_melee = None
+        self.boss_projectiles = []
+        self.snowflakes = []  # legacy alias, cleared each frame
         self.coins = []
         self.loot_spawned = False
 
@@ -254,6 +280,8 @@ class GameState:
         for obj in level.get("objects", []):
             t = obj.get("type")
             if t == "boss":
+                from boss_moves import resolve_moveset, default_holodos_moveset
+                from level_loader import BOSS_CATALOG
                 self.boss_alive = True
                 self.boss_id = obj.get("id", "holodos")
                 self.boss_x = obj.get("x", BOSS_X)
@@ -265,6 +293,19 @@ class GameState:
                 self.boss_phase = 1
                 self.boss_dying = False
                 self.boss_arena_locked = False
+                self.boss_sprite_mode = "idle"
+                self.boss_melee = None
+                self.boss_projectiles = []
+                self.boss_shake_timer = 0
+                catalog_ms = (BOSS_CATALOG.get(self.boss_id) or {}).get("moveset")
+                if catalog_ms is None and self.boss_id == "holodos":
+                    catalog_ms = default_holodos_moveset()
+                self.boss_moveset = resolve_moveset(obj, catalog_ms)
+                idle0 = 90
+                phases = self.boss_moveset.get("phases") or []
+                if phases:
+                    idle0 = int(phases[0].get("idle", 90))
+                self.boss_idle_timer = idle0
                 self.loot_spawned = False
                 if hasattr(self, "_boss_base_y"):
                     del self._boss_base_y

@@ -14,11 +14,12 @@ def _boss_sprite_key(state):
     if state.boss_dying:
         frame = min(state.boss_death_timer // 30, 2)
         return f"holodos_dead{frame + 1}"
-    phase = state.boss_phase
+
+    # Тело босса всегда idle-цикл; VFX атак рисуются отдельно (melee / projectiles)
     frame = (state.boss_anim // 10) % 3 + 1
-    if phase == 1:
-        return f"holodos{frame}"
-    return f"holodos{min(frame + 1, 4)}"
+    if state.boss_phase >= 2:
+        return f"holodos{min(frame + 1, 4)}"
+    return f"holodos{frame}"
 
 
 def _draw_boss_hp_bar(screen, state):
@@ -35,15 +36,38 @@ def _draw_boss_hp_bar(screen, state):
 
     pygame.draw.rect(screen, (60, 60, 60), (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4))
     pygame.draw.rect(screen, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
-    color = (100, 200, 255) if state.boss_phase == 1 else (255, 100, 100)
+    colors = {1: (100, 200, 255), 2: (255, 180, 80), 3: (255, 80, 80)}
+    color = colors.get(state.boss_phase, (100, 200, 255))
     pygame.draw.rect(screen, color, (bar_x, bar_y, int(bar_w * ratio), bar_h))
 
     font = pygame.font.SysFont("dejavusans", 16, bold=True)
-    label = "Холодос"
-    if state.boss_phase == 2:
-        label += " — Фаза 2"
+    label = f"Холодос — Фаза {state.boss_phase}"
     text = font.render(f"{label}  {max(0, state.boss_hp)}/{BOSS_MAX_HP}", True, (255, 255, 255))
     screen.blit(text, text.get_rect(center=(WIDTH // 2, bar_y - 12)))
+
+
+def _draw_boss_projectiles(screen, state, cam_x, cam_y):
+    for p in getattr(state, "boss_projectiles", []) or []:
+        key = p.get("sprite")
+        img = state.images.get(key) if key else None
+        if img is not None:
+            screen.blit(img, (p["x"] - cam_x, p["y"] - cam_y))
+        else:
+            r = pygame.Rect(p["x"] - cam_x, p["y"] - cam_y, p.get("w", 16), p.get("h", 16))
+            pygame.draw.rect(screen, (180, 220, 255), r)
+
+    melee = getattr(state, "boss_melee", None)
+    if melee:
+        key = melee.get("sprite")
+        img = state.images.get(key) if key else None
+        if img is not None:
+            screen.blit(img, (melee["x"] - cam_x, melee["y"] - cam_y))
+        else:
+            r = pygame.Rect(
+                melee["x"] - cam_x, melee["y"] - cam_y,
+                melee.get("w", 100), melee.get("h", 100),
+            )
+            pygame.draw.rect(screen, (255, 100, 100), r, 2)
 
 
 def _draw_npc(screen, npc, cam_x, cam_y):
@@ -157,8 +181,7 @@ def render(screen, state, pls, ground_y, blur, walls=None):
         sprite = state.images[_boss_sprite_key(state)]
         screen.blit(sprite, (state.boss_x + shake - cam_x, state.boss_y - cam_y))
 
-    for sf in state.snowflakes:
-        screen.blit(state.images['snowflake'], (sf["x"] - 8 - cam_x, sf["y"] - 8 - cam_y))
+    _draw_boss_projectiles(screen, state, cam_x, cam_y)
 
     for coin in state.coins:
         if not coin["collected"]:

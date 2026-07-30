@@ -11,6 +11,7 @@
   1–8          — выбор инструмента
   T            — для телепорта: клик задаёт точку назначения
   Enter        — редактировать диалог выделенного NPC
+  M            — мувсеты выделенного босса
   Delete/Backspace — удалить выделение
   Ctrl+S       — сохранить
   Ctrl+O       — перезагрузить файл
@@ -35,6 +36,14 @@ from level_loader import (
     ability_label,
     boss_label,
     boss_drop,
+    catalog_moveset,
+)
+from boss_moves import (
+    ACTIONS,
+    deep_copy_moveset,
+    default_holodos_moveset,
+    empty_event,
+    event_summary,
 )
 
 TOOLS = TOOL_CATEGORIES
@@ -103,6 +112,19 @@ class LevelEditor:
         self.text_mode = False
         self.text_buffer = ""
         self.text_line_idx = 0
+
+        self.moveset_mode = False
+        self.ms_phase_idx = 0
+        self.ms_move_idx = 0
+        self.ms_event_idx = 0
+        self.ms_focus = "phase"  # phase | moves | events | field | action_pick
+        self.ms_field_idx = 0
+        self.ms_preview = False
+        self.ms_edit_buffer = ""
+        self.ms_editing_value = False
+        self.ms_renaming = False
+        self.ms_action_choices = list(ACTIONS.keys())
+        self.ms_action_pick_idx = 0
 
         self.tool_rects = []
         self.variant_rects = []
@@ -326,6 +348,553 @@ class LevelEditor:
                 dialog.append("...")
             self.set_status(f"Диалог NPC «{obj.get('name', 'NPC')}»: {len(dialog)} строк")
 
+    def _ensure_boss_moveset(self, obj):
+        if not obj.get("moveset"):
+            cat = catalog_moveset(obj.get("id", "holodos")) or default_holodos_moveset()
+            obj["moveset"] = deep_copy_moveset(cat)
+        return obj["moveset"]
+
+    def begin_moveset_edit(self):
+        obj = self.get_selected_obj()
+        if not obj or not _is_boss_obj(obj):
+            self.set_status("Выделите босса, затем M")
+            return
+        self._ensure_boss_moveset(obj)
+        self.moveset_mode = True
+        self.ms_phase_idx = 0
+        self.ms_move_idx = 0
+        self.ms_event_idx = 0
+        self.ms_focus = "phase"
+        self.ms_preview = False
+        self.ms_editing_value = False
+        self.set_status("Мувсеты: Tab фокус, ←/→ фаза, ↑/↓ список, A событие, N мув, P превью, Esc выход")
+
+    def _ms_phases(self, obj):
+        return self._ensure_boss_moveset(obj).setdefault("phases", [])
+
+    def _ms_moves_dict(self, obj):
+        return self._ensure_boss_moveset(obj).setdefault("moves", {})
+
+    def _ms_phase(self, obj):
+        phases = self._ms_phases(obj)
+        if not phases:
+            return None
+        self.ms_phase_idx = max(0, min(self.ms_phase_idx, len(phases) - 1))
+        return phases[self.ms_phase_idx]
+
+    def _ms_move_names(self, obj):
+        ph = self._ms_phase(obj)
+        if not ph:
+            return []
+        return list(ph.get("moves") or [])
+
+    def _ms_current_move_name(self, obj):
+        names = self._ms_move_names(obj)
+        if not names:
+            return None
+        self.ms_move_idx = max(0, min(self.ms_move_idx, len(names) - 1))
+        return names[self.ms_move_idx]
+
+    def _ms_events(self, obj):
+        name = self._ms_current_move_name(obj)
+        if not name:
+            return []
+        move = self._ms_moves_dict(obj).setdefault(name, {"duration": 60, "events": []})
+        return move.setdefault("events", [])
+
+    def _ms_current_event(self, obj):
+        events = self._ms_events(obj)
+        if not events:
+            return None
+        self.ms_event_idx = max(0, min(self.ms_event_idx, len(events) - 1))
+        return events[self.ms_event_idx]
+
+    def _ms_event_fields(self, ev):
+        action = ev.get("action", "missile")
+        meta = ACTIONS.get(action, {})
+        fields = [{"key": "frame", "type": "int", "default": 10}]
+        for f in meta.get("fields", []):
+            fields.append(f)
+        return fields
+
+    def _ms_field_value(self, ev, field):
+        key = field.get("store_as", field["key"])
+        if key in ev:
+            return ev[key]
+        return field.get("default", field.get("choices", [""])[0] if field.get("choices") else "")
+
+    def _ms_set_field_value(self, ev, field, value):
+        key = field.get("store_as", field["key"])
+        ftype = field.get("type", "str")
+        if ftype == "int":
+            try:
+                ev[key] = int(value)
+            except ValueError:
+                return False
+        elif ftype == "float":
+            try:
+                ev[key] = float(value)
+            except ValueError:
+                return False
+        else:
+            ev[key] = value
+        return True
+
+    def _ms_nudge_field(self, ev, field, delta):
+        key = field.get("store_as", field["key"])
+        ftype = field.get("type", "str")
+        if ftype == "choice":
+            choices = field.get("choices") or []
+            if not choices:
+                return
+            cur = str(self._ms_field_value(ev, field))
+            try:
+                i = choices.index(cur)
+            except ValueError:
+                i = 0
+            ev[key] = choices[(i + delta) % len(choices)]
+        elif ftype == "int":
+            ev[key] = int(self._ms_field_value(ev, field) or 0) + delta
+        elif ftype == "float":
+            step = 0.5 if abs(delta) == 1 else float(delta)
+            ev[key] = round(float(self._ms_field_value(ev, field) or 0) + step, 2)
+
+    def draw_moveset_overlay(self):
+        obj = self.get_selected_obj()
+        if not obj or not _is_boss_obj(obj):
+            return
+        ms = self._ensure_boss_moveset(obj)
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((10, 14, 22, 210))
+        self.screen.blit(overlay, (0, 0))
+
+        panel = pygame.Rect(40, 30, WIDTH - 80, HEIGHT - 60)
+        pygame.draw.rect(self.screen, (24, 28, 38), panel, border_radius=8)
+        pygame.draw.rect(self.screen, (80, 160, 220), panel, 2, border_radius=8)
+
+        title = self.font_bold.render(
+            f"Мувсеты — {boss_label(obj.get('id', 'holodos'))}", True, (255, 255, 255),
+        )
+        self.screen.blit(title, (panel.x + 16, panel.y + 12))
+
+        phases = self._ms_phases(obj)
+        ph = self._ms_phase(obj)
+        y = panel.y + 48
+        phase_label = (
+            f"Фаза {self.ms_phase_idx + 1}/{max(1, len(phases))}  "
+            f"hp_below={ph.get('hp_below') if ph else '?'}  "
+            f"idle={ph.get('idle') if ph else '?'} кадров"
+        )
+        col = (255, 220, 120) if self.ms_focus == "phase" else (200, 210, 220)
+        self.screen.blit(self.font.render(phase_label, True, col), (panel.x + 16, y))
+        y += 28
+        self.screen.blit(
+            self.font_sm.render("←/→ смена фазы · [/] idle ±5 · ;/' hp_below ±0.05", True, (140, 150, 160)),
+            (panel.x + 16, y),
+        )
+        y += 26
+
+        # Moves list
+        names = self._ms_move_names(obj)
+        self.screen.blit(
+            self.font.render(
+                "Мувы фазы:" + ("  [фокус]" if self.ms_focus == "moves" else ""),
+                True,
+                (255, 220, 120) if self.ms_focus == "moves" else (220, 220, 230),
+            ),
+            (panel.x + 16, y),
+        )
+        y += 24
+        if not names:
+            self.screen.blit(self.font_sm.render("(пусто — N чтобы добавить)", True, (160, 160, 160)), (panel.x + 24, y))
+            y += 20
+        else:
+            for i, name in enumerate(names):
+                mark = ">" if i == self.ms_move_idx else " "
+                line = f"{mark} {name}"
+                if self.ms_renaming and i == self.ms_move_idx:
+                    line = f"{mark} {self.ms_edit_buffer}_"
+                c = (120, 220, 255) if i == self.ms_move_idx else (180, 185, 195)
+                self.screen.blit(self.font_sm.render(line, True, c), (panel.x + 24, y))
+                y += 18
+                if y > panel.y + 220:
+                    break
+
+        y = max(y + 8, panel.y + 230)
+        move_name = self._ms_current_move_name(obj)
+        move = (ms.get("moves") or {}).get(move_name) if move_name else None
+        dur = move.get("duration", 60) if move else 0
+        self.screen.blit(
+            self.font.render(
+                f"События «{move_name or '—'}»  duration={dur}"
+                + ("  [фокус]" if self.ms_focus in ("events", "field") else ""),
+                True,
+                (255, 220, 120) if self.ms_focus in ("events", "field") else (220, 220, 230),
+            ),
+            (panel.x + 16, y),
+        )
+        y += 22
+        self.screen.blit(
+            self.font_sm.render("A добавить · Del удалить · Enter поля · ,/. duration ±5", True, (140, 150, 160)),
+            (panel.x + 16, y),
+        )
+        y += 22
+
+        events = self._ms_events(obj)
+        list_top = y
+        for i, ev in enumerate(events):
+            mark = ">" if i == self.ms_event_idx else " "
+            line = f"{mark} {event_summary(ev)}"
+            c = (120, 255, 180) if i == self.ms_event_idx else (180, 185, 195)
+            self.screen.blit(self.font_sm.render(line[:70], True, c), (panel.x + 24, y))
+            y += 17
+            if y > panel.bottom - 160:
+                break
+
+        # Field editor
+        ev = self._ms_current_event(obj)
+        fy = panel.bottom - 150
+        pygame.draw.line(self.screen, (60, 70, 90), (panel.x + 12, fy - 8), (panel.right - 12, fy - 8))
+        if self.ms_focus == "action_pick":
+            self.screen.blit(self.font.render("Выбор action (↑/↓, Enter):", True, (255, 200, 100)), (panel.x + 16, fy))
+            fy += 22
+            for i, act in enumerate(self.ms_action_choices):
+                mark = ">" if i == self.ms_action_pick_idx else " "
+                label = ACTIONS[act]["label"]
+                c = (255, 230, 120) if i == self.ms_action_pick_idx else (180, 185, 195)
+                self.screen.blit(self.font_sm.render(f"{mark} {act} — {label}", True, c), (panel.x + 24, fy))
+                fy += 16
+        elif ev is not None:
+            fields = self._ms_event_fields(ev)
+            self.ms_field_idx = max(0, min(self.ms_field_idx, max(0, len(fields) - 1)))
+            self.screen.blit(
+                self.font.render(
+                    "Поля события ([/] или ввод+Enter):" if self.ms_focus == "field" else "Поля (Enter — править):",
+                    True, (200, 210, 220),
+                ),
+                (panel.x + 16, fy),
+            )
+            fy += 22
+            for i, field in enumerate(fields):
+                key = field.get("store_as", field["key"])
+                val = self._ms_field_value(ev, field)
+                mark = ">" if self.ms_focus == "field" and i == self.ms_field_idx else " "
+                shown = f"{mark} {key} = {val}"
+                if self.ms_editing_value and self.ms_focus == "field" and i == self.ms_field_idx:
+                    shown = f"{mark} {key} = {self.ms_edit_buffer}_"
+                c = (255, 220, 120) if mark == ">" else (170, 175, 185)
+                self.screen.blit(self.font_sm.render(shown, True, c), (panel.x + 24, fy))
+                fy += 16
+
+        help_y = panel.bottom - 28
+        help_txt = "Tab фокус · N новый мув · R rename · P превью · Esc закрыть · Ctrl+S сохранить уровень"
+        self.screen.blit(self.font_sm.render(help_txt, True, (130, 140, 150)), (panel.x + 16, help_y))
+
+        if self.ms_preview and ev is not None:
+            self._draw_moveset_preview(panel, obj, ev)
+
+    def _draw_moveset_preview(self, panel, obj, ev):
+        """Мини-схема: босс + направление выбранного события."""
+        box = pygame.Rect(panel.right - 320, panel.y + 50, 290, 180)
+        pygame.draw.rect(self.screen, (15, 18, 26), box, border_radius=6)
+        pygame.draw.rect(self.screen, (100, 140, 180), box, 1, border_radius=6)
+        self.screen.blit(self.font_sm.render("Превью схемы (P)", True, (180, 200, 220)), (box.x + 8, box.y + 6))
+
+        bx, by = box.centerx, box.centery + 10
+        pygame.draw.rect(self.screen, (80, 160, 220), (bx - 20, by - 40, 40, 70), 2)
+        self.screen.blit(self.font_sm.render("BOSS", True, (80, 160, 220)), (bx - 18, by - 55))
+
+        action = ev.get("action")
+        if action == "missile":
+            mode = ev.get("mode", "aim")
+            pygame.draw.circle(self.screen, (255, 180, 80), (bx + 50, by - 20), 6)
+            if mode in ("aim", "spread"):
+                pygame.draw.line(self.screen, (255, 180, 80), (bx + 20, by - 10), (bx + 90, by + 20), 2)
+            elif mode == "ring":
+                pygame.draw.circle(self.screen, (255, 180, 80), (bx, by), 50, 1)
+            self.screen.blit(self.font_sm.render(f"missile/{mode}", True, (255, 200, 120)), (box.x + 8, box.bottom - 22))
+        elif action == "slash_proj":
+            side = ev.get("side", "auto")
+            x2 = bx - 80 if side == "left" else bx + 80
+            pygame.draw.line(self.screen, (120, 180, 255), (bx, by), (x2, by), 3)
+            self.screen.blit(self.font_sm.render(f"slash {side}", True, (120, 180, 255)), (box.x + 8, box.bottom - 22))
+        elif action == "ice_rise":
+            pygame.draw.rect(self.screen, (150, 220, 255), (bx - 60, by + 30, 120, 12))
+            self.screen.blit(self.font_sm.render(f"ice → {ev.get('target', 'player')}", True, (150, 220, 255)), (box.x + 8, box.bottom - 22))
+        elif action == "melee":
+            side = ev.get("side", "auto")
+            rx = bx - 70 if side != "right" else bx + 10
+            pygame.draw.rect(self.screen, (255, 100, 100), (rx, by - 30, 60, 50), 2)
+            self.screen.blit(self.font_sm.render(f"melee {side}", True, (255, 120, 120)), (box.x + 8, box.bottom - 22))
+        elif action == "set_sprite":
+            self.screen.blit(self.font_sm.render(f"sprite={ev.get('sprite')}", True, (200, 200, 200)), (box.x + 8, box.bottom - 22))
+        else:
+            self.screen.blit(self.font_sm.render(str(action), True, (180, 180, 180)), (box.x + 8, box.bottom - 22))
+
+    def _handle_moveset_event(self, event):
+        if event.type == pygame.QUIT:
+            self.moveset_mode = False
+            return
+        if event.type != pygame.KEYDOWN:
+            return
+
+        obj = self.get_selected_obj()
+        if not obj or not _is_boss_obj(obj):
+            self.moveset_mode = False
+            return
+
+        if event.key == pygame.K_ESCAPE:
+            if self.ms_editing_value or self.ms_renaming:
+                self.ms_editing_value = False
+                self.ms_renaming = False
+                return
+            if self.ms_focus == "action_pick":
+                self.ms_focus = "events"
+                return
+            if self.ms_preview:
+                self.ms_preview = False
+                return
+            self.moveset_mode = False
+            self.set_status("Редактор мувсетов закрыт")
+            return
+
+        mods = pygame.key.get_mods()
+        if event.key == pygame.K_s and (mods & pygame.KMOD_CTRL):
+            self.save()
+            return
+
+        if self.ms_renaming:
+            if event.key == pygame.K_RETURN:
+                old = getattr(self, "_ms_rename_pending", None)
+                new = self.ms_edit_buffer.strip().replace(" ", "_")
+                moves = self._ms_moves_dict(obj)
+                if old and new and new != old and new not in moves and old in moves:
+                    moves[new] = moves.pop(old)
+                    for ph2 in self._ms_phases(obj):
+                        lst = ph2.get("moves") or []
+                        for i, m in enumerate(lst):
+                            if m == old:
+                                lst[i] = new
+                    self.set_status(f"Мува {old} → {new}")
+                self.ms_renaming = False
+                self._ms_rename_pending = None
+                return
+            if event.key == pygame.K_BACKSPACE:
+                self.ms_edit_buffer = self.ms_edit_buffer[:-1]
+                return
+            if event.unicode and event.unicode.isprintable():
+                self.ms_edit_buffer += event.unicode
+            return
+
+        if self.ms_editing_value:
+            if event.key == pygame.K_RETURN:
+                ev = self._ms_current_event(obj)
+                fields = self._ms_event_fields(ev) if ev else []
+                if ev and fields:
+                    field = fields[self.ms_field_idx]
+                    if self._ms_set_field_value(ev, field, self.ms_edit_buffer):
+                        self.set_status(f"{field.get('store_as', field['key'])} = {self.ms_edit_buffer}")
+                    else:
+                        self.set_status("Неверное значение")
+                self.ms_editing_value = False
+                return
+            if event.key == pygame.K_BACKSPACE:
+                self.ms_edit_buffer = self.ms_edit_buffer[:-1]
+                return
+            if event.unicode and event.unicode.isprintable():
+                self.ms_edit_buffer += event.unicode
+            return
+
+        if self.ms_focus == "action_pick":
+            if event.key in (pygame.K_UP, pygame.K_w):
+                self.ms_action_pick_idx = (self.ms_action_pick_idx - 1) % len(self.ms_action_choices)
+            elif event.key in (pygame.K_DOWN, pygame.K_s):
+                self.ms_action_pick_idx = (self.ms_action_pick_idx + 1) % len(self.ms_action_choices)
+            elif event.key == pygame.K_RETURN:
+                act = self.ms_action_choices[self.ms_action_pick_idx]
+                events = self._ms_events(obj)
+                events.append(empty_event(act))
+                events.sort(key=lambda e: int(e.get("frame", 0)))
+                self.ms_event_idx = len(events) - 1
+                # найти после sort
+                for i, e in enumerate(events):
+                    if e is events[self.ms_event_idx] or e.get("action") == act:
+                        pass
+                # re-find last added by matching newest
+                self.ms_event_idx = max(0, len(events) - 1)
+                self.ms_focus = "events"
+                self.set_status(f"Событие {act} добавлено")
+            return
+
+        if event.key == pygame.K_TAB:
+            order = ["phase", "moves", "events", "field"]
+            i = order.index(self.ms_focus) if self.ms_focus in order else 0
+            self.ms_focus = order[(i + 1) % len(order)]
+            return
+
+        if event.key == pygame.K_p:
+            self.ms_preview = not self.ms_preview
+            return
+
+        if event.key == pygame.K_LEFT:
+            if self.ms_focus == "phase":
+                self.ms_phase_idx = max(0, self.ms_phase_idx - 1)
+                self.ms_move_idx = 0
+                self.ms_event_idx = 0
+            elif self.ms_focus == "field":
+                ev = self._ms_current_event(obj)
+                fields = self._ms_event_fields(ev) if ev else []
+                if ev and fields:
+                    self._ms_nudge_field(ev, fields[self.ms_field_idx], -1)
+            return
+
+        if event.key == pygame.K_RIGHT:
+            if self.ms_focus == "phase":
+                phases = self._ms_phases(obj)
+                self.ms_phase_idx = min(len(phases) - 1, self.ms_phase_idx + 1)
+                self.ms_move_idx = 0
+                self.ms_event_idx = 0
+            elif self.ms_focus == "field":
+                ev = self._ms_current_event(obj)
+                fields = self._ms_event_fields(ev) if ev else []
+                if ev and fields:
+                    self._ms_nudge_field(ev, fields[self.ms_field_idx], 1)
+            return
+
+        if event.key in (pygame.K_UP, pygame.K_w):
+            if self.ms_focus == "moves":
+                self.ms_move_idx = max(0, self.ms_move_idx - 1)
+                self.ms_event_idx = 0
+            elif self.ms_focus in ("events", "field"):
+                if self.ms_focus == "field":
+                    self.ms_field_idx = max(0, self.ms_field_idx - 1)
+                else:
+                    self.ms_event_idx = max(0, self.ms_event_idx - 1)
+            return
+
+        if event.key in (pygame.K_DOWN, pygame.K_s):
+            if self.ms_focus == "moves":
+                names = self._ms_move_names(obj)
+                self.ms_move_idx = min(max(0, len(names) - 1), self.ms_move_idx + 1)
+                self.ms_event_idx = 0
+            elif self.ms_focus in ("events", "field"):
+                if self.ms_focus == "field":
+                    ev = self._ms_current_event(obj)
+                    fields = self._ms_event_fields(ev) if ev else []
+                    self.ms_field_idx = min(max(0, len(fields) - 1), self.ms_field_idx + 1)
+                else:
+                    events = self._ms_events(obj)
+                    self.ms_event_idx = min(max(0, len(events) - 1), self.ms_event_idx + 1)
+            return
+
+        # idle nudge
+        if event.key == pygame.K_LEFTBRACKET:
+            ph = self._ms_phase(obj)
+            if ph is not None and self.ms_focus == "phase":
+                ph["idle"] = max(5, int(ph.get("idle", 60)) - 5)
+            elif self.ms_focus == "field":
+                ev = self._ms_current_event(obj)
+                fields = self._ms_event_fields(ev) if ev else []
+                if ev and fields:
+                    self._ms_nudge_field(ev, fields[self.ms_field_idx], -1)
+            return
+        if event.key == pygame.K_RIGHTBRACKET:
+            ph = self._ms_phase(obj)
+            if ph is not None and self.ms_focus == "phase":
+                ph["idle"] = int(ph.get("idle", 60)) + 5
+            elif self.ms_focus == "field":
+                ev = self._ms_current_event(obj)
+                fields = self._ms_event_fields(ev) if ev else []
+                if ev and fields:
+                    self._ms_nudge_field(ev, fields[self.ms_field_idx], 1)
+            return
+
+        if event.key == pygame.K_SEMICOLON:
+            ph = self._ms_phase(obj)
+            if ph is not None:
+                ph["hp_below"] = round(max(0.05, float(ph.get("hp_below", 1.0)) - 0.05), 2)
+            return
+        if event.key == pygame.K_QUOTE:
+            ph = self._ms_phase(obj)
+            if ph is not None:
+                ph["hp_below"] = round(min(1.0, float(ph.get("hp_below", 1.0)) + 0.05), 2)
+            return
+
+        if event.key == pygame.K_COMMA:
+            name = self._ms_current_move_name(obj)
+            if name:
+                move = self._ms_moves_dict(obj)[name]
+                move["duration"] = max(10, int(move.get("duration", 60)) - 5)
+            return
+        if event.key == pygame.K_PERIOD:
+            name = self._ms_current_move_name(obj)
+            if name:
+                move = self._ms_moves_dict(obj)[name]
+                move["duration"] = int(move.get("duration", 60)) + 5
+            return
+
+        if event.key == pygame.K_a:
+            self.ms_focus = "action_pick"
+            self.ms_action_pick_idx = 0
+            return
+
+        if event.key == pygame.K_n:
+            # new move
+            moves = self._ms_moves_dict(obj)
+            base = "new_move"
+            name = base
+            n = 1
+            while name in moves:
+                n += 1
+                name = f"{base}_{n}"
+            moves[name] = {"duration": 60, "events": [empty_event("missile")]}
+            ph = self._ms_phase(obj)
+            if ph is not None:
+                ph.setdefault("moves", []).append(name)
+                self.ms_move_idx = len(ph["moves"]) - 1
+            self.ms_event_idx = 0
+            self.ms_focus = "moves"
+            self.set_status(f"Мува {name} добавлена")
+            return
+
+        if event.key == pygame.K_r and self.ms_focus == "moves":
+            old = self._ms_current_move_name(obj)
+            if not old:
+                return
+            self.ms_renaming = True
+            self.ms_edit_buffer = old
+            self._ms_rename_pending = old
+            self.set_status("Введите новое имя мува и Enter")
+            return
+
+        if event.key == pygame.K_RETURN:
+            if self.ms_focus == "field":
+                ev = self._ms_current_event(obj)
+                fields = self._ms_event_fields(ev) if ev else []
+                if ev and fields:
+                    field = fields[self.ms_field_idx]
+                    self.ms_editing_value = True
+                    self.ms_edit_buffer = str(self._ms_field_value(ev, field))
+                return
+            self.ms_focus = "field"
+            return
+
+        if event.key in (pygame.K_DELETE, pygame.K_BACKSPACE):
+            if self.ms_focus == "events":
+                events = self._ms_events(obj)
+                if events:
+                    del events[self.ms_event_idx]
+                    self.ms_event_idx = max(0, self.ms_event_idx - 1)
+                    self.set_status("Событие удалено")
+            elif self.ms_focus == "moves":
+                name = self._ms_current_move_name(obj)
+                ph = self._ms_phase(obj)
+                if name and ph and name in ph.get("moves", []):
+                    ph["moves"].remove(name)
+                    self.ms_move_idx = max(0, self.ms_move_idx - 1)
+                    self.set_status(f"{name} убрана из фазы (определение сохранено)")
+            return
+
     def save(self):
         save_level(self.level, self.path)
         self.set_status(f"Сохранено → {self.path}")
@@ -516,6 +1085,7 @@ class LevelEditor:
             "WASD/стрелки — камера",
             "T — цель телепорта",
             "Enter — диалог NPC",
+            "M — мувсеты босса",
             "Ctrl+S — сохранить",
             "Del — удалить выделение",
         ]
@@ -578,11 +1148,16 @@ class LevelEditor:
         if _is_boss_obj(obj):
             bid = obj.get("id", "holodos")
             drop = boss_drop(bid)
+            ms = obj.get("moveset") or {}
+            n_phases = len(ms.get("phases") or [])
+            n_moves = len(ms.get("moves") or {})
             lines = [
                 f"Босс: {boss_label(bid)}",
                 f"x={obj['x']} y={obj['y']}",
                 f"arena_x={obj.get('arena_x')}",
                 f"min_x={obj.get('min_x')} max_x={obj.get('max_x')}",
+                f"мувсет: {n_phases} фаз, {n_moves} мувов",
+                "M — редактор мувсетов",
             ]
             if drop:
                 abl = ", ".join(drop["abilities"]) if drop["abilities"] else "—"
@@ -618,6 +1193,10 @@ class LevelEditor:
         return lines
 
     def handle_event(self, event):
+        if self.moveset_mode:
+            self._handle_moveset_event(event)
+            return True
+
         if self.text_mode:
             self._handle_text_event(event)
             return
@@ -649,6 +1228,9 @@ class LevelEditor:
                     self.set_status("Кликните точку назначения телепорта")
                 else:
                     self.set_status("Сначала выделите телепорт")
+                return True
+            if event.key == pygame.K_m:
+                self.begin_moveset_edit()
                 return True
             if event.key == pygame.K_RETURN:
                 self.begin_dialog_edit()
@@ -750,7 +1332,7 @@ class LevelEditor:
                 if self.handle_event(event) is False:
                     running = False
 
-            if not self.text_mode:
+            if not self.text_mode and not self.moveset_mode:
                 self.update_camera(pygame.key.get_pressed())
 
             self.draw_world()
@@ -759,6 +1341,8 @@ class LevelEditor:
                 mx, my = pygame.mouse.get_pos()
                 if mx < WIDTH - PANEL_W:
                     pygame.draw.circle(self.screen, (255, 80, 80), (mx, my), 10, 2)
+            if self.moveset_mode:
+                self.draw_moveset_overlay()
 
             pygame.display.flip()
             self.clock.tick(FPS)

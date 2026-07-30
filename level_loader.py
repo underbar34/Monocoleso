@@ -18,21 +18,13 @@ BOSS_CATALOG = {
             "min_x_offset": -1100,
             "max_x_offset": 1200,
         },
-        # Дроп при смерти. Пустой drop / None / {} — ничего не падает.
-        # abilities — id из ABILITY_CATALOG; coins — число монет.
         "drop": {
             "coins": 10,
             "abilities": ["sprint"],
         },
+        # moveset подставляется в _ensure_boss_moveset() ниже
+        "moveset": None,
     },
-    # Пример босса без дропа:
-    # "empty_boss": {
-    #     "label": "Пустой",
-    #     "color": (120, 120, 120),
-    #     "sprite": "holodos1",
-    #     "defaults": {...},
-    #     "drop": None,  # или {"coins": 0, "abilities": []}
-    # },
 }
 
 ABILITY_CATALOG = {
@@ -95,8 +87,23 @@ _LEGACY_ABILITY = {
 }
 
 
+def _ensure_catalog_movesets():
+    """Лениво подставляет дефолтный moveset Холодоса в каталог."""
+    from boss_moves import default_holodos_moveset
+    meta = BOSS_CATALOG.get("holodos")
+    if meta is not None and not meta.get("moveset"):
+        meta["moveset"] = default_holodos_moveset()
+
+
+def catalog_moveset(boss_id):
+    _ensure_catalog_movesets()
+    return (BOSS_CATALOG.get(boss_id) or {}).get("moveset")
+
+
 def normalize_object(obj):
     """Приводит объект уровня к актуальной схеме (ability/boss с id)."""
+    from boss_moves import resolve_moveset, deep_copy_moveset
+
     o = dict(obj)
     t = o.get("type")
     if t in _LEGACY_ABILITY:
@@ -114,16 +121,24 @@ def normalize_object(obj):
         o.setdefault("id", "holodos")
         if o["id"] not in BOSS_CATALOG:
             o["id"] = "holodos"
+        cat = catalog_moveset(o["id"])
+        if not o.get("moveset") and cat:
+            o["moveset"] = deep_copy_moveset(cat)
+        elif o.get("moveset") and cat:
+            o["moveset"] = resolve_moveset(o, cat)
     return o
 
 
 def default_object(category, x, y, variant_id=None):
     """Создаёт объект: category = tool, variant_id — конкретный босс/абилка."""
+    from boss_moves import deep_copy_moveset
+
     if category == "boss":
         bid = variant_id or next(iter(BOSS_CATALOG))
         meta = BOSS_CATALOG[bid]
         d = meta["defaults"]
-        return {
+        ms = catalog_moveset(bid)
+        obj = {
             "type": "boss",
             "id": bid,
             "x": x,
@@ -132,6 +147,9 @@ def default_object(category, x, y, variant_id=None):
             "min_x": max(0, x + d["min_x_offset"]),
             "max_x": x + d["max_x_offset"],
         }
+        if ms:
+            obj["moveset"] = deep_copy_moveset(ms)
+        return obj
     if category == "ability":
         aid = variant_id or next(iter(ABILITY_CATALOG))
         if aid not in ABILITY_CATALOG:
