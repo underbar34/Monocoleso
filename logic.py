@@ -14,6 +14,7 @@ from config import (
     DASH_DURATION, DASH_SPEED, DASH_COOLDOWN,
     PLAYER_W, PLAYER_H,
     MAX_AKUM_POWER,
+    CAM_FOLLOW_LERP, CAM_ARENA_LERP,
 )
 from level_loader import boss_drop, ABILITY_CATALOG
 from boss_moves import (
@@ -27,11 +28,38 @@ def get_camera_x(state):
     return cam_x
 
 
+def _boss_camera_locked(state):
+    """Статичная камера на арене, пока босс жив и арена заблокирована."""
+    return (
+        getattr(state, "boss_alive", False)
+        and not getattr(state, "boss_dying", False)
+        and getattr(state, "boss_arena_locked", False)
+    )
+
+
 def get_camera(state):
-    """Камера следует за игроком по X и Y без границ мира."""
-    cam_x = state.playerx - WIDTH // 3
-    cam_y = state.playery - HEIGHT // 2
-    return cam_x, cam_y
+    """Камера с плавным следованием; на боссфайте левый край = arena_x."""
+    target_y = state.playery - HEIGHT // 2
+    if _boss_camera_locked(state):
+        target_x = float(getattr(state, "boss_arena_x", BOSS_ARENA_X))
+        lerp = CAM_ARENA_LERP
+    else:
+        target_x = state.playerx - WIDTH // 3
+        lerp = CAM_FOLLOW_LERP
+
+    if getattr(state, "cam_x", None) is None:
+        state.cam_x = float(target_x)
+        state.cam_y = float(target_y)
+    else:
+        state.cam_x += (target_x - state.cam_x) * lerp
+        state.cam_y += (target_y - state.cam_y) * lerp
+        # дотягиваем, если почти на месте — без дрожи
+        if abs(target_x - state.cam_x) < 0.35:
+            state.cam_x = float(target_x)
+        if abs(target_y - state.cam_y) < 0.35:
+            state.cam_y = float(target_y)
+
+    return state.cam_x, state.cam_y
 
 
 def _player_hitbox(state):

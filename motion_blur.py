@@ -8,16 +8,26 @@ class MotionBlur:
     def __init__(self, length=8):
         self.length = length
         self.trail = []
+        self._ghost_cache = {}  # (id(image), alpha) -> Surface
 
     def update(self, x, y, image, strong=False):
         self.trail.append((x, y, image, strong))
-        limit = self.length if strong else max(3, self.length // 2)
+        limit = self.length if strong else 3
         while len(self.trail) > limit:
             self.trail.pop(0)
-        if not strong and len(self.trail) > 3:
-            # в обычном движении шлейф короче
-            while len(self.trail) > 3:
-                self.trail.pop(0)
+
+    def _ghost(self, image, alpha):
+        key = (id(image), alpha)
+        cached = self._ghost_cache.get(key)
+        if cached is not None:
+            return cached
+        ghost = image.convert_alpha()
+        ghost.set_alpha(alpha)
+        # ограничиваем кэш
+        if len(self._ghost_cache) > 48:
+            self._ghost_cache.clear()
+        self._ghost_cache[key] = ghost
+        return ghost
 
     def draw(self, screen, cam_x=0, cam_y=0):
         total = len(self.trail)
@@ -29,9 +39,8 @@ class MotionBlur:
                 alpha = int(35 + 90 * t)
             else:
                 alpha = int(20 + 40 * t)
-            ghost = image.convert_alpha()
-            ghost.set_alpha(alpha)
-            screen.blit(ghost, (x - cam_x, y - cam_y))
+            screen.blit(self._ghost(image, alpha), (x - cam_x, y - cam_y))
 
     def clear(self):
         self.trail.clear()
+        self._ghost_cache.clear()

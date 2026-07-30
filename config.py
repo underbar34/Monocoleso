@@ -83,6 +83,10 @@ HEALTH_MAX = 5
 # Неуязвимость
 NEUYAZVIMOST_MAX = 60
 
+# Камера
+CAM_FOLLOW_LERP = 0.16
+CAM_ARENA_LERP = 0.10
+
 # Акум
 MAX_AKUM_POWER = 5
 
@@ -201,6 +205,8 @@ class GameState:
         self.lookdir = 1
         self.texture_cache = {}
         self.texture_overrides = {}
+        self.cam_x = None
+        self.cam_y = None
 
         # Пикапы с уровня (extra_life / ability)
         self.level_pickups = []
@@ -269,6 +275,8 @@ class GameState:
         spawn = level.get("player_spawn", {"x": 120, "y": 640})
         self.playerx = spawn.get("x", 120)
         self.playery = spawn.get("y", 640)
+        self.cam_x = None
+        self.cam_y = None
         self.world_width = level.get("world_width", WORLD_WIDTH)
         self.world_height = level.get("world_height", WORLD_HEIGHT)
         self.world_top = level.get("world_top", WORLD_TOP)

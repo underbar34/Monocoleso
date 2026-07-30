@@ -58,7 +58,13 @@ def _draw_boss_hp_bar(screen, state):
 
 
 def _draw_boss_projectiles(screen, state, cam_x, cam_y):
+    view_l, view_r = cam_x - 80, cam_x + WIDTH + 80
+    view_t, view_b = cam_y - 80, cam_y + HEIGHT + 80
     for p in getattr(state, "boss_projectiles", []) or []:
+        if p["x"] + p.get("w", 24) < view_l or p["x"] > view_r:
+            continue
+        if p["y"] + p.get("h", 24) < view_t or p["y"] > view_b:
+            continue
         key = p.get("sprite")
         img = state.images.get(key) if key else None
         if img is not None:
@@ -174,10 +180,19 @@ def _draw_hint(screen, state):
 def render(screen, state, pls, ground_y, blur, walls=None):
     walls = walls or []
     cam_x, cam_y = get_camera(state)
+    # запас вокруг экрана — не рисуем далёкие тайлы
+    view_l = cam_x - 120
+    view_r = cam_x + WIDTH + 120
+    view_t = cam_y - 120
+    view_b = cam_y + HEIGHT + 120
 
     screen.fill([255, 255, 255])
 
     for pl in pls:
+        if pl.x + pl.shir < view_l or pl.x > view_r:
+            continue
+        if pl.y + PLATFORM_H < view_t or pl.y > view_b:
+            continue
         img = _resolve_img(
             state, getattr(pl, "texture", None), "platform",
             fit=(pl.shir, PLATFORM_H),
@@ -185,6 +200,10 @@ def render(screen, state, pls, ground_y, blur, walls=None):
         screen.blit(img, (pl.x - cam_x, pl.y - cam_y))
 
     for wall in walls:
+        if wall.x + wall.w < view_l or wall.x > view_r:
+            continue
+        if wall.y + wall.h < view_t or wall.y > view_b:
+            continue
         img = _resolve_img(
             state, getattr(wall, "texture", None), "wall",
             fit=(wall.w, wall.h),
@@ -192,13 +211,17 @@ def render(screen, state, pls, ground_y, blur, walls=None):
         screen.blit(img, (wall.x - cam_x, wall.y - cam_y))
 
     for tp in state.teleports:
-        _draw_teleport(screen, tp, cam_x, cam_y, state)
+        if view_l - 40 <= tp["x"] <= view_r and view_t - 40 <= tp["y"] <= view_b:
+            _draw_teleport(screen, tp, cam_x, cam_y, state)
 
     for npc in state.npcs:
-        _draw_npc(screen, npc, cam_x, cam_y, state)
+        if view_l - 40 <= npc["x"] <= view_r and view_t - 40 <= npc["y"] <= view_b:
+            _draw_npc(screen, npc, cam_x, cam_y, state)
 
     for pickup in state.level_pickups:
         if pickup["collected"]:
+            continue
+        if not (view_l - 40 <= pickup["x"] <= view_r and view_t - 40 <= pickup["y"] <= view_b):
             continue
         if pickup["type"] == "ability":
             aid = pickup.get("id", "sprint")
@@ -226,7 +249,8 @@ def render(screen, state, pls, ground_y, blur, walls=None):
 
     for coin in state.coins:
         if not coin["collected"]:
-            screen.blit(state.images['coin'], (coin["x"] - 10 - cam_x, coin["y"] - 10 - cam_y))
+            if view_l - 20 <= coin["x"] <= view_r and view_t - 20 <= coin["y"] <= view_b:
+                screen.blit(state.images['coin'], (coin["x"] - 10 - cam_x, coin["y"] - 10 - cam_y))
 
     drawn_loot = set()
     for item in getattr(state, "boss_loot", []) or []:
