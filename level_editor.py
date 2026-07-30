@@ -46,6 +46,13 @@ from textures import (
     TEXTUREABLE_OBJECT_TYPES,
 )
 from platforms import PLATFORM_H
+from boss_moves import (
+    ACTIONS,
+    deep_copy_moveset,
+    default_holodos_moveset,
+    empty_event,
+    event_summary,
+)
 
 TOOLS = TOOL_CATEGORIES
 
