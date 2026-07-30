@@ -199,6 +199,7 @@ class GameState:
         self.akum = images['akum0']
         self.images = images
         self.lookdir = 1
+        self.texture_cache = {}
 
         # Пикапы с уровня (extra_life / ability)
         self.level_pickups = []
@@ -315,6 +316,7 @@ class GameState:
                     "id": obj.get("id", "sprint"),
                     "x": obj["x"],
                     "y": obj["y"],
+                    "texture": obj.get("texture"),
                     "collected": False,
                 })
             elif t == "extra_life":
@@ -322,6 +324,7 @@ class GameState:
                     "type": "extra_life",
                     "x": obj["x"],
                     "y": obj["y"],
+                    "texture": obj.get("texture"),
                     "collected": False,
                 })
             elif t == "npc":
@@ -330,6 +333,7 @@ class GameState:
                     "y": obj["y"],
                     "name": obj.get("name", "NPC"),
                     "dialog": list(obj.get("dialog") or ["..."]),
+                    "texture": obj.get("texture"),
                 })
             elif t == "teleport":
                 self.teleports.append({
@@ -337,6 +341,7 @@ class GameState:
                     "y": obj["y"],
                     "target_x": obj.get("target_x", obj["x"] + 200),
                     "target_y": obj.get("target_y", obj["y"]),
+                    "texture": obj.get("texture"),
                 })
 
         lives = [p for p in self.level_pickups if p["type"] == "extra_life"]

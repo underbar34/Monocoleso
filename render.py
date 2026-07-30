@@ -1,13 +1,24 @@
 # render.py
 import pygame
 from config import (
-    HEALTH_MAX, ATAKA_KADRY, WIDTH, HEIGHT, BOSS_MAX_HP,
+    HEALTH_MAX, ATAKA_KADRY, WIDTH, HEIGHT, BOSS_MAX_HP, WALL_W, WALL_H,
 )
 from logic import get_camera, _boss_in_arena
 from level_loader import ABILITY_CATALOG
+from textures import load_texture
+from platforms import PLATFORM_H
 
 NPC_W, NPC_H = 36, 50
 TELEPORT_R = 18
+PICKUP_SIZE = 28
+
+
+def _resolve_img(state, texture, default_key, fit=None, max_size=None):
+    if texture:
+        img = load_texture(texture, state.texture_cache, fit=fit, max_size=max_size)
+        if img is not None:
+            return img
+    return state.images.get(default_key)
 
 
 def _boss_sprite_key(state):
@@ -70,22 +81,38 @@ def _draw_boss_projectiles(screen, state, cam_x, cam_y):
             pygame.draw.rect(screen, (255, 100, 100), r, 2)
 
 
-def _draw_npc(screen, npc, cam_x, cam_y):
+def _draw_npc(screen, npc, cam_x, cam_y, state=None):
     sx, sy = npc["x"] - cam_x, npc["y"] - cam_y
-    body = pygame.Rect(sx, sy, NPC_W, NPC_H)
-    pygame.draw.rect(screen, (255, 152, 0), body)
-    pygame.draw.rect(screen, (80, 50, 0), body, 2)
-    pygame.draw.circle(screen, (255, 220, 180), (sx + NPC_W // 2, sy + 10), 10)
+    tex = npc.get("texture") if state else None
+    img = None
+    if state and tex:
+        img = load_texture(tex, state.texture_cache, max_size=(80, 100))
+    if img is not None:
+        screen.blit(img, (sx, sy))
+    else:
+        body = pygame.Rect(sx, sy, NPC_W, NPC_H)
+        pygame.draw.rect(screen, (255, 152, 0), body)
+        pygame.draw.rect(screen, (80, 50, 0), body, 2)
+        pygame.draw.circle(screen, (255, 220, 180), (sx + NPC_W // 2, sy + 10), 10)
     font = pygame.font.SysFont("dejavusans", 14)
     name = font.render(npc.get("name", "NPC"), True, (40, 40, 40))
-    screen.blit(name, name.get_rect(midbottom=(sx + NPC_W // 2, sy - 4)))
+    mid_x = sx + (img.get_width() // 2 if img is not None else NPC_W // 2)
+    screen.blit(name, name.get_rect(midbottom=(mid_x, sy - 4)))
 
 
-def _draw_teleport(screen, tp, cam_x, cam_y):
-    sx = tp["x"] - cam_x + TELEPORT_R
-    sy = tp["y"] - cam_y + TELEPORT_R
-    pygame.draw.circle(screen, (0, 188, 212), (sx, sy), TELEPORT_R)
-    pygame.draw.circle(screen, (255, 255, 255), (sx, sy), TELEPORT_R - 6, 2)
+def _draw_teleport(screen, tp, cam_x, cam_y, state=None):
+    sx = tp["x"] - cam_x
+    sy = tp["y"] - cam_y
+    tex = tp.get("texture") if state else None
+    img = None
+    if state and tex:
+        img = load_texture(tex, state.texture_cache, max_size=(48, 48))
+    if img is not None:
+        screen.blit(img, (sx, sy))
+        return
+    cx, cy = sx + TELEPORT_R, sy + TELEPORT_R
+    pygame.draw.circle(screen, (0, 188, 212), (cx, cy), TELEPORT_R)
+    pygame.draw.circle(screen, (255, 255, 255), (cx, cy), TELEPORT_R - 6, 2)
 
 
 def _draw_dialog(screen, state):
@@ -151,30 +178,44 @@ def render(screen, state, pls, ground_y, blur, walls=None):
     screen.fill([255, 255, 255])
 
     for pl in pls:
-        screen.blit(state.images['platform'], (pl.x - cam_x, pl.y - cam_y))
+        img = _resolve_img(
+            state, getattr(pl, "texture", None), "platform",
+            fit=(pl.shir, PLATFORM_H),
+        )
+        screen.blit(img, (pl.x - cam_x, pl.y - cam_y))
 
     for wall in walls:
-        screen.blit(state.images['wall'], (wall.x - cam_x, wall.y - cam_y))
+        img = _resolve_img(
+            state, getattr(wall, "texture", None), "wall",
+            fit=(wall.w, wall.h),
+        )
+        screen.blit(img, (wall.x - cam_x, wall.y - cam_y))
 
     for tp in state.teleports:
-        _draw_teleport(screen, tp, cam_x, cam_y)
+        _draw_teleport(screen, tp, cam_x, cam_y, state)
 
     for npc in state.npcs:
-        _draw_npc(screen, npc, cam_x, cam_y)
+        _draw_npc(screen, npc, cam_x, cam_y, state)
 
     for pickup in state.level_pickups:
         if pickup["collected"]:
             continue
         if pickup["type"] == "ability":
             aid = pickup.get("id", "sprint")
-            key = "dash_skill" if aid == "dash" else "sprint_skill"
+            key = ABILITY_CATALOG.get(aid, {}).get(
+                "image", "dash_skill" if aid == "dash" else "sprint_skill",
+            )
         elif pickup["type"] == "dash_skill":
             key = "dash_skill"
         elif pickup["type"] == "sprint_skill":
             key = "sprint_skill"
         else:
             key = "extra_life"
-        screen.blit(state.images[key], (pickup["x"] - cam_x, pickup["y"] - cam_y))
+        img = _resolve_img(
+            state, pickup.get("texture"), key,
+            max_size=(PICKUP_SIZE * 2, PICKUP_SIZE * 2),
+        )
+        screen.blit(img, (pickup["x"] - cam_x, pickup["y"] - cam_y))
 
     if state.boss_alive or state.boss_dying:
         shake = state.boss_shake if state.boss_alive else 0

@@ -5,10 +5,11 @@ PLATFORM_H = 20
 
 
 class Platform:
-    def __init__(self, x, y):
+    def __init__(self, x, y, texture=None):
         self.x = x
         self.y = y
         self.shir = 105
+        self.texture = texture
 
     def rect(self):
         return (self.x, self.y, self.shir, PLATFORM_H)
@@ -23,11 +24,12 @@ class Platform:
 class Wall:
     """Вертикальная стена — повёрнутая платформа, сквозь которую нельзя пройти."""
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, texture=None):
         self.x = x
         self.y = y
         self.w = WALL_W
         self.h = WALL_H
+        self.texture = texture
 
     def rect(self):
         return (self.x, self.y, self.w, self.h)

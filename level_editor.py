@@ -12,6 +12,7 @@
   T            — для телепорта: клик задаёт точку назначения
   Enter        — редактировать диалог выделенного NPC
   M            — мувсеты выделенного босса
+  I            — текстура выделенного объекта (не босс)
   Delete/Backspace — удалить выделение
   Ctrl+S       — сохранить
   Ctrl+O       — перезагрузить файл
@@ -38,13 +39,13 @@ from level_loader import (
     boss_drop,
     catalog_moveset,
 )
-from boss_moves import (
-    ACTIONS,
-    deep_copy_moveset,
-    default_holodos_moveset,
-    empty_event,
-    event_summary,
+from textures import (
+    list_asset_textures,
+    load_texture,
+    texture_label,
+    TEXTUREABLE_OBJECT_TYPES,
 )
+from platforms import PLATFORM_H
 
 TOOLS = TOOL_CATEGORIES
 
@@ -125,6 +126,12 @@ class LevelEditor:
         self.ms_renaming = False
         self.ms_action_choices = list(ACTIONS.keys())
         self.ms_action_pick_idx = 0
+
+        self.texture_mode = False
+        self.texture_list = []
+        self.texture_idx = 0
+        self.texture_cache = {}
+        self.texture_filter = ""
 
         self.tool_rects = []
         self.variant_rects = []
@@ -368,6 +375,176 @@ class LevelEditor:
         self.ms_preview = False
         self.ms_editing_value = False
         self.set_status("Мувсеты: Tab фокус, ←/→ фаза, ↑/↓ список, A событие, N мув, P превью, Esc выход")
+
+    def _selected_texture_target(self):
+        """Возвращает (dict_ref, kind_label) или (None, reason)."""
+        if not self.selected:
+            return None, "Нет выделения"
+        kind, idx = self.selected
+        if kind == "platform":
+            if 0 <= idx < len(self.level["platforms"]):
+                return self.level["platforms"][idx], "платформа"
+            return None, "Платформа не найдена"
+        if kind == "wall":
+            walls = self.level.get("walls", [])
+            if 0 <= idx < len(walls):
+                return walls[idx], "стена"
+            return None, "Стена не найдена"
+        if kind == "spawn":
+            return None, "Спавну текстуру задать нельзя"
+        if kind == "object":
+            obj = self.get_selected_obj()
+            if not obj:
+                return None, "Объект не найден"
+            if _is_boss_obj(obj):
+                return None, "Текстуру босса менять нельзя"
+            if obj.get("type") not in TEXTUREABLE_OBJECT_TYPES:
+                return None, f"Тип {obj.get('type')} без кастомной текстуры"
+            return obj, OBJECT_LABELS.get(obj.get("type"), obj.get("type"))
+        return None, "Нельзя"
+
+    def begin_texture_edit(self):
+        target, label = self._selected_texture_target()
+        if target is None:
+            self.set_status(label)
+            return
+        self.texture_list = list_asset_textures()
+        self.texture_filter = ""
+        current = target.get("texture")
+        self.texture_idx = 0
+        if current and current in self.texture_list:
+            self.texture_idx = self.texture_list.index(current)
+        self.texture_mode = True
+        self.set_status(
+            f"Текстура ({label}): ↑/↓ выбор, Enter применить, 0 сброс, Esc отмена"
+        )
+
+    def _filtered_textures(self):
+        q = self.texture_filter.lower()
+        if not q:
+            return self.texture_list
+        return [p for p in self.texture_list if q in p.lower()]
+
+    def apply_texture(self, path):
+        target, label = self._selected_texture_target()
+        if target is None:
+            self.set_status(label)
+            self.texture_mode = False
+            return
+        if path:
+            target["texture"] = path
+            self.set_status(f"{label}: {texture_label(path)}")
+        else:
+            target.pop("texture", None)
+            self.set_status(f"{label}: текстура сброшена (дефолт)")
+        self.texture_mode = False
+
+    def draw_texture_overlay(self):
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((10, 14, 22, 210))
+        self.screen.blit(overlay, (0, 0))
+
+        panel = pygame.Rect(60, 40, WIDTH - 120, HEIGHT - 80)
+        pygame.draw.rect(self.screen, (24, 28, 38), panel, border_radius=8)
+        pygame.draw.rect(self.screen, (120, 200, 160), panel, 2, border_radius=8)
+
+        target, label = self._selected_texture_target()
+        title = self.font_bold.render(f"Текстура — {label}", True, (255, 255, 255))
+        self.screen.blit(title, (panel.x + 16, panel.y + 12))
+        cur = (target or {}).get("texture")
+        cur_txt = texture_label(cur) if cur else "(дефолт)"
+        self.screen.blit(
+            self.font_sm.render(f"Сейчас: {cur_txt}", True, (180, 200, 190)),
+            (panel.x + 16, panel.y + 40),
+        )
+        if self.texture_filter:
+            self.screen.blit(
+                self.font_sm.render(f"Фильтр: {self.texture_filter}_", True, (255, 220, 120)),
+                (panel.x + 16, panel.y + 60),
+            )
+        else:
+            self.screen.blit(
+                self.font_sm.render("Фильтр: начните печатать имя файла", True, (120, 130, 140)),
+                (panel.x + 16, panel.y + 60),
+            )
+
+        items = self._filtered_textures()
+        if items:
+            self.texture_idx = max(0, min(self.texture_idx, len(items) - 1))
+        else:
+            self.texture_idx = 0
+
+        list_y = panel.y + 90
+        visible = 18
+        start = max(0, self.texture_idx - visible // 2)
+        end = min(len(items), start + visible)
+        for i in range(start, end):
+            path = items[i]
+            mark = ">" if i == self.texture_idx else " "
+            c = (120, 255, 180) if i == self.texture_idx else (190, 195, 205)
+            self.screen.blit(
+                self.font_sm.render(f"{mark} {texture_label(path, 70)}", True, c),
+                (panel.x + 20, list_y),
+            )
+            list_y += 18
+
+        preview = pygame.Rect(panel.right - 220, panel.y + 90, 190, 190)
+        pygame.draw.rect(self.screen, (15, 18, 26), preview, border_radius=6)
+        pygame.draw.rect(self.screen, (80, 100, 90), preview, 1, border_radius=6)
+        if items:
+            img = load_texture(
+                items[self.texture_idx], self.texture_cache, max_size=(170, 170),
+            )
+            if img is not None:
+                px = preview.centerx - img.get_width() // 2
+                py = preview.centery - img.get_height() // 2
+                self.screen.blit(img, (px, py))
+
+        help_txt = "↑/↓ · Enter применить · 0 сброс · Backspace фильтр · Esc отмена"
+        self.screen.blit(
+            self.font_sm.render(help_txt, True, (130, 140, 150)),
+            (panel.x + 16, panel.bottom - 28),
+        )
+
+    def _handle_texture_event(self, event):
+        if event.type == pygame.QUIT:
+            self.texture_mode = False
+            return
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key == pygame.K_ESCAPE:
+            self.texture_mode = False
+            self.set_status("Выбор текстуры отменён")
+            return
+        if event.key == pygame.K_RETURN:
+            items = self._filtered_textures()
+            if items:
+                self.apply_texture(items[self.texture_idx])
+            else:
+                self.set_status("Нет файлов в Assets/")
+            return
+        if event.key == pygame.K_0:
+            self.apply_texture(None)
+            return
+        if event.key in (pygame.K_UP, pygame.K_w):
+            items = self._filtered_textures()
+            if items:
+                self.texture_idx = (self.texture_idx - 1) % len(items)
+            return
+        if event.key in (pygame.K_DOWN, pygame.K_s):
+            items = self._filtered_textures()
+            if items:
+                self.texture_idx = (self.texture_idx + 1) % len(items)
+            return
+        if event.key == pygame.K_BACKSPACE:
+            self.texture_filter = self.texture_filter[:-1]
+            self.texture_idx = 0
+            return
+        if event.unicode and event.unicode.isprintable():
+            if event.unicode == "0" and not self.texture_filter:
+                return
+            self.texture_filter += event.unicode
+            self.texture_idx = 0
 
     def _ms_phases(self, obj):
         return self._ensure_boss_moveset(obj).setdefault("phases", [])
@@ -930,14 +1107,28 @@ class LevelEditor:
         plat_img = self.images["platform"]
         for i, p in enumerate(self.level["platforms"]):
             sx, sy = self.screen_x(p["x"]), self.screen_y(p["y"])
-            self.screen.blit(plat_img, (sx, sy))
+            img = plat_img
+            if p.get("texture"):
+                custom = load_texture(
+                    p["texture"], self.texture_cache, fit=(105, PLATFORM_H),
+                )
+                if custom is not None:
+                    img = custom
+            self.screen.blit(img, (sx, sy))
             if self.selected == ("platform", i):
                 pygame.draw.rect(self.screen, (255, 80, 80), (sx - 2, sy - 2, 109, 24), 2)
 
         wall_img = self.images["wall"]
         for i, w in enumerate(self.level.get("walls", [])):
             sx, sy = self.screen_x(w["x"]), self.screen_y(w["y"])
-            self.screen.blit(wall_img, (sx, sy))
+            img = wall_img
+            if w.get("texture"):
+                custom = load_texture(
+                    w["texture"], self.texture_cache, fit=(WALL_W, WALL_H),
+                )
+                if custom is not None:
+                    img = custom
+            self.screen.blit(img, (sx, sy))
             if self.selected == ("wall", i):
                 pygame.draw.rect(
                     self.screen, (255, 80, 80),
@@ -986,21 +1177,51 @@ class LevelEditor:
             meta = ABILITY_CATALOG.get(aid, {})
             img_key = meta.get("image", "sprint_skill")
             color = meta.get("color", OBJECT_COLORS["ability"])
-            self.screen.blit(self.images[img_key], (sx, sy))
+            img = self.images[img_key]
+            if obj.get("texture"):
+                custom = load_texture(
+                    obj["texture"], self.texture_cache, max_size=(48, 48),
+                )
+                if custom is not None:
+                    img = custom
+            self.screen.blit(img, (sx, sy))
             if selected:
-                pygame.draw.rect(self.screen, (255, 80, 80), (sx - 2, sy - 2, 32, 32), 2)
+                pygame.draw.rect(
+                    self.screen, (255, 80, 80),
+                    (sx - 2, sy - 2, img.get_width() + 4, img.get_height() + 4), 2,
+                )
             tag = self.font_sm.render(ability_label(aid), True, color)
             self.screen.blit(tag, (sx, sy - 14))
             return
 
         color = OBJECT_COLORS.get(t, (100, 100, 100))
         if t == "extra_life":
-            self.screen.blit(self.images["extra_life"], (sx, sy))
+            img = self.images["extra_life"]
+            if obj.get("texture"):
+                custom = load_texture(
+                    obj["texture"], self.texture_cache, max_size=(48, 48),
+                )
+                if custom is not None:
+                    img = custom
+            self.screen.blit(img, (sx, sy))
             if selected:
-                pygame.draw.rect(self.screen, (255, 80, 80), (sx - 2, sy - 2, 32, 32), 2)
+                pygame.draw.rect(
+                    self.screen, (255, 80, 80),
+                    (sx - 2, sy - 2, img.get_width() + 4, img.get_height() + 4), 2,
+                )
         elif t == "teleport":
-            pygame.draw.circle(self.screen, color, (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R)
-            pygame.draw.circle(self.screen, (255, 255, 255), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R - 6, 2)
+            if obj.get("texture"):
+                custom = load_texture(
+                    obj["texture"], self.texture_cache, max_size=(48, 48),
+                )
+                if custom is not None:
+                    self.screen.blit(custom, (sx, sy))
+                else:
+                    pygame.draw.circle(self.screen, color, (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R)
+                    pygame.draw.circle(self.screen, (255, 255, 255), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R - 6, 2)
+            else:
+                pygame.draw.circle(self.screen, color, (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R)
+                pygame.draw.circle(self.screen, (255, 255, 255), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R - 6, 2)
             tx = self.screen_x(obj.get("target_x", obj["x"] + 200))
             ty = self.screen_y(obj.get("target_y", obj["y"]))
             pygame.draw.line(
@@ -1011,10 +1232,19 @@ class LevelEditor:
             if selected:
                 pygame.draw.circle(self.screen, (255, 80, 80), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R + 4, 2)
         elif t == "npc":
-            body = pygame.Rect(sx, sy, NPC_W, NPC_H)
-            pygame.draw.rect(self.screen, color, body)
-            pygame.draw.rect(self.screen, (60, 40, 0), body, 2)
-            pygame.draw.circle(self.screen, (255, 220, 180), (sx + NPC_W // 2, sy + 10), 10)
+            custom = None
+            if obj.get("texture"):
+                custom = load_texture(
+                    obj["texture"], self.texture_cache, max_size=(80, 100),
+                )
+            if custom is not None:
+                self.screen.blit(custom, (sx, sy))
+                body = pygame.Rect(sx, sy, custom.get_width(), custom.get_height())
+            else:
+                body = pygame.Rect(sx, sy, NPC_W, NPC_H)
+                pygame.draw.rect(self.screen, color, body)
+                pygame.draw.rect(self.screen, (60, 40, 0), body, 2)
+                pygame.draw.circle(self.screen, (255, 220, 180), (sx + NPC_W // 2, sy + 10), 10)
             name = obj.get("name", "NPC")
             label = self.font_sm.render(name, True, (40, 40, 40))
             self.screen.blit(label, (sx, sy - 16))
@@ -1086,6 +1316,7 @@ class LevelEditor:
             "T — цель телепорта",
             "Enter — диалог NPC",
             "M — мувсеты босса",
+            "I — текстура объекта",
             "Ctrl+S — сохранить",
             "Del — удалить выделение",
         ]
@@ -1140,10 +1371,18 @@ class LevelEditor:
             return [f"Спавн x={sp['x']} y={sp['y']}"]
         if kind == "platform":
             p = self.level["platforms"][idx]
-            return [f"Платформа #{idx}", f"x={p['x']} y={p['y']}"]
+            lines = [f"Платформа #{idx}", f"x={p['x']} y={p['y']}"]
+            if p.get("texture"):
+                lines.append(f"tex={texture_label(p['texture'], 28)}")
+            lines.append("I — текстура")
+            return lines
         if kind == "wall":
             w = self.level["walls"][idx]
-            return [f"Стена #{idx}", f"x={w['x']} y={w['y']}"]
+            lines = [f"Стена #{idx}", f"x={w['x']} y={w['y']}"]
+            if w.get("texture"):
+                lines.append(f"tex={texture_label(w['texture'], 28)}")
+            lines.append("I — текстура")
+            return lines
         obj = self.level["objects"][idx]
         if _is_boss_obj(obj):
             bid = obj.get("id", "holodos")
@@ -1158,6 +1397,7 @@ class LevelEditor:
                 f"min_x={obj.get('min_x')} max_x={obj.get('max_x')}",
                 f"мувсет: {n_phases} фаз, {n_moves} мувов",
                 "M — редактор мувсетов",
+                "(текстуру босса менять нельзя)",
             ]
             if drop:
                 abl = ", ".join(drop["abilities"]) if drop["abilities"] else "—"
@@ -1169,15 +1409,21 @@ class LevelEditor:
         if _is_ability_obj(obj):
             aid = _ability_id(obj)
             meta = ABILITY_CATALOG.get(aid, {})
-            return [
+            lines = [
                 f"Абилка: {ability_label(aid)}",
                 f"клавиша: {meta.get('key_hint', '?')}",
                 f"x={obj['x']} y={obj['y']}",
             ]
+            if obj.get("texture"):
+                lines.append(f"tex={texture_label(obj['texture'], 28)}")
+            lines.append("I — текстура")
+            return lines
         lines = [
             f"{OBJECT_LABELS.get(obj['type'], obj['type'])}",
             f"x={obj['x']} y={obj['y']}",
         ]
+        if obj.get("texture"):
+            lines.append(f"tex={texture_label(obj['texture'], 28)}")
         if obj["type"] == "teleport":
             lines += [
                 f"→ ({obj.get('target_x')}, {obj.get('target_y')})",
@@ -1190,11 +1436,17 @@ class LevelEditor:
             for i, d in enumerate(dialog[:3]):
                 lines.append(f"  {i + 1}. {d[:26]}")
             lines.append("Enter — править диалог")
+        if obj.get("type") in TEXTUREABLE_OBJECT_TYPES:
+            lines.append("I — текстура")
         return lines
 
     def handle_event(self, event):
         if self.moveset_mode:
             self._handle_moveset_event(event)
+            return True
+
+        if self.texture_mode:
+            self._handle_texture_event(event)
             return True
 
         if self.text_mode:
@@ -1231,6 +1483,9 @@ class LevelEditor:
                 return True
             if event.key == pygame.K_m:
                 self.begin_moveset_edit()
+                return True
+            if event.key == pygame.K_i:
+                self.begin_texture_edit()
                 return True
             if event.key == pygame.K_RETURN:
                 self.begin_dialog_edit()
@@ -1332,7 +1587,7 @@ class LevelEditor:
                 if self.handle_event(event) is False:
                     running = False
 
-            if not self.text_mode and not self.moveset_mode:
+            if not self.text_mode and not self.moveset_mode and not self.texture_mode:
                 self.update_camera(pygame.key.get_pressed())
 
             self.draw_world()
@@ -1343,6 +1598,8 @@ class LevelEditor:
                     pygame.draw.circle(self.screen, (255, 80, 80), (mx, my), 10, 2)
             if self.moveset_mode:
                 self.draw_moveset_overlay()
+            if self.texture_mode:
+                self.draw_texture_overlay()
 
             pygame.display.flip()
             self.clock.tick(FPS)

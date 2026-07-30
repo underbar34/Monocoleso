@@ -121,6 +121,8 @@ def normalize_object(obj):
         o.setdefault("id", "holodos")
         if o["id"] not in BOSS_CATALOG:
             o["id"] = "holodos"
+        # Текстуру босса из уровня не принимаем — только каталог спрайтов
+        o.pop("texture", None)
         cat = catalog_moveset(o["id"])
         if not o.get("moveset") and cat:
             o["moveset"] = deep_copy_moveset(cat)
@@ -222,11 +224,17 @@ def save_level(data, path=DEFAULT_LEVEL_PATH):
 
 
 def platforms_from_level(level):
-    return [Platform(p["x"], p["y"]) for p in level.get("platforms", [])]
+    return [
+        Platform(p["x"], p["y"], p.get("texture"))
+        for p in level.get("platforms", [])
+    ]
 
 
 def walls_from_level(level):
-    return [Wall(w["x"], w["y"]) for w in level.get("walls", [])]
+    return [
+        Wall(w["x"], w["y"], w.get("texture"))
+        for w in level.get("walls", [])
+    ]
 
 
 def objects_of_type(level, obj_type):
