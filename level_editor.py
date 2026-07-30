@@ -12,7 +12,8 @@
   T            — для телепорта: клик задаёт точку назначения
   Enter        — редактировать диалог выделенного NPC
   M            — мувсеты выделенного босса
-  I            — текстура выделенного объекта (не босс)
+  I            — текстура ТИПА (все абилки спринта / все платформы / …)
+  U            — текстура одного выделенного объекта
   Delete/Backspace — удалить выделение
   Ctrl+S       — сохранить
   Ctrl+O       — перезагрузить файл
@@ -44,6 +45,12 @@ from textures import (
     load_texture,
     texture_label,
     TEXTUREABLE_OBJECT_TYPES,
+    TEXTUREABLE_TOOLS,
+    override_key_for_object,
+    override_key_for_tool,
+    get_override,
+    stamp_override_on_level,
+    ability_override_key,
 )
 from platforms import PLATFORM_H
 from boss_moves import (
@@ -139,6 +146,10 @@ class LevelEditor:
         self.texture_idx = 0
         self.texture_cache = {}
         self.texture_filter = ""
+        self.texture_edit_key = None  # ключ texture_overrides (режим type)
+        self.texture_edit_label = ""
+        self.texture_scope = "type"  # type | instance
+        self.texture_instance_ref = None  # dict объекта в режиме instance
 
         self.tool_rects = []
         self.variant_rects = []
@@ -208,12 +219,20 @@ class LevelEditor:
     def place_at(self, wx, wy):
         wx, wy = _snap(wx), _snap(wy)
         if self.tool == "platform":
-            self.level["platforms"].append({"x": int(wx), "y": int(wy)})
+            item = {"x": int(wx), "y": int(wy)}
+            tex = get_override(self.level, "platform")
+            if tex:
+                item["texture"] = tex
+            self.level["platforms"].append(item)
             self.selected = ("platform", len(self.level["platforms"]) - 1)
             self.set_status(f"Платформа @ ({int(wx)}, {int(wy)})")
             return
         if self.tool == "wall":
-            self.level.setdefault("walls", []).append({"x": int(wx), "y": int(wy)})
+            item = {"x": int(wx), "y": int(wy)}
+            tex = get_override(self.level, "wall")
+            if tex:
+                item["texture"] = tex
+            self.level.setdefault("walls", []).append(item)
             self.selected = ("wall", len(self.level["walls"]) - 1)
             self.set_status(f"Стена @ ({int(wx)}, {int(wy)})")
             return
@@ -234,6 +253,11 @@ class LevelEditor:
         else:
             obj = default_object(self.tool, int(wx), int(wy))
             label = OBJECT_LABELS.get(self.tool, self.tool)
+        key = override_key_for_object(obj) if self.tool != "boss" else None
+        if key:
+            tex = get_override(self.level, key)
+            if tex:
+                obj["texture"] = tex
         self.level["objects"].append(obj)
         self.selected = ("object", len(self.level["objects"]) - 1)
         self.set_status(f"{label} @ ({int(wx)}, {int(wy)})")
@@ -384,18 +408,18 @@ class LevelEditor:
         self.set_status("Мувсеты: Tab фокус, ←/→ фаза, ↑/↓ список, A событие, N мув, P превью, Esc выход")
 
     def _selected_texture_target(self):
-        """Возвращает (dict_ref, kind_label) или (None, reason)."""
+        """Точечная правка: (dict_ref, label) или (None, error)."""
         if not self.selected:
-            return None, "Нет выделения"
+            return None, "Выделите объект для точечной текстуры (U)"
         kind, idx = self.selected
         if kind == "platform":
             if 0 <= idx < len(self.level["platforms"]):
-                return self.level["platforms"][idx], "платформа"
+                return self.level["platforms"][idx], f"платформа #{idx}"
             return None, "Платформа не найдена"
         if kind == "wall":
             walls = self.level.get("walls", [])
             if 0 <= idx < len(walls):
-                return walls[idx], "стена"
+                return walls[idx], f"стена #{idx}"
             return None, "Стена не найдена"
         if kind == "spawn":
             return None, "Спавну текстуру задать нельзя"
@@ -407,14 +431,77 @@ class LevelEditor:
                 return None, "Текстуру босса менять нельзя"
             if obj.get("type") not in TEXTUREABLE_OBJECT_TYPES:
                 return None, f"Тип {obj.get('type')} без кастомной текстуры"
-            return obj, OBJECT_LABELS.get(obj.get("type"), obj.get("type"))
+            if _is_ability_obj(obj):
+                return obj, f"абилка «{ability_label(_ability_id(obj))}» (этот)"
+            return obj, f"{OBJECT_LABELS.get(obj.get('type'), obj.get('type'))} (этот)"
         return None, "Нельзя"
 
+    def _texture_edit_context(self):
+        """
+        Контекст правки текстуры ТИПА (на все объекты).
+        Возвращает (override_key, label) или (None, error_msg).
+        Приоритет: выделенный объект → текущий инструмент.
+        """
+        if self.selected:
+            kind, idx = self.selected
+            if kind == "platform":
+                return "platform", "все платформы"
+            if kind == "wall":
+                return "wall", "все стены"
+            if kind == "spawn":
+                return None, "Спавну текстуру задать нельзя"
+            if kind == "object":
+                obj = self.get_selected_obj()
+                if not obj:
+                    return None, "Объект не найден"
+                if _is_boss_obj(obj):
+                    return None, "Текстуру босса менять нельзя"
+                if _is_ability_obj(obj):
+                    aid = _ability_id(obj)
+                    return ability_override_key(aid), f"все абилки «{ability_label(aid)}»"
+                key = override_key_for_object(obj)
+                if key:
+                    return key, f"все: {OBJECT_LABELS.get(obj.get('type'), obj.get('type'))}"
+                return None, f"Тип {obj.get('type')} без кастомной текстуры"
+
+        if self.tool == "boss" or self.tool == "player_spawn":
+            return None, "Выберите инструмент абилки/платформы/… или объект (не босс)"
+        if self.tool not in TEXTUREABLE_TOOLS:
+            return None, "Этот инструмент не поддерживает текстуры"
+        key = override_key_for_tool(self.tool, self.ability_variant)
+        if self.tool == "ability":
+            return key, f"все абилки «{ability_label(self.ability_variant)}»"
+        return key, f"все: {OBJECT_LABELS.get(self.tool, self.tool)}"
+
     def begin_texture_edit(self):
+        """I — текстура типа (на все)."""
+        key, label = self._texture_edit_context()
+        if key is None:
+            self.set_status(label)
+            return
+        self.texture_scope = "type"
+        self.texture_instance_ref = None
+        self.texture_edit_key = key
+        self.texture_edit_label = label
+        self.texture_list = list_asset_textures()
+        self.texture_filter = ""
+        current = get_override(self.level, key)
+        self.texture_idx = 0
+        if current and current in self.texture_list:
+            self.texture_idx = self.texture_list.index(current)
+        self.texture_mode = True
+        self.set_status(f"Тип ({label}): ↑/↓, Enter — на ВСЕ, 0 сброс, Esc")
+
+    def begin_texture_edit_instance(self):
+        """U — текстура одного выделенного объекта."""
         target, label = self._selected_texture_target()
         if target is None:
             self.set_status(label)
             return
+        self.texture_scope = "instance"
+        self.texture_instance_ref = target
+        self.texture_edit_key = None
+        self.texture_edit_label = label
         self.texture_list = list_asset_textures()
         self.texture_filter = ""
         current = target.get("texture")
@@ -422,9 +509,7 @@ class LevelEditor:
         if current and current in self.texture_list:
             self.texture_idx = self.texture_list.index(current)
         self.texture_mode = True
-        self.set_status(
-            f"Текстура ({label}): ↑/↓ выбор, Enter применить, 0 сброс, Esc отмена"
-        )
+        self.set_status(f"Точка ({label}): ↑/↓, Enter — только этот, 0 сброс, Esc")
 
     def _filtered_textures(self):
         q = self.texture_filter.lower()
@@ -433,18 +518,40 @@ class LevelEditor:
         return [p for p in self.texture_list if q in p.lower()]
 
     def apply_texture(self, path):
-        target, label = self._selected_texture_target()
-        if target is None:
-            self.set_status(label)
+        if getattr(self, "texture_scope", "type") == "instance":
+            target = self.texture_instance_ref
+            label = self.texture_edit_label or "объект"
+            if target is None:
+                target, label = self._selected_texture_target()
+            if target is None:
+                self.set_status(label or "Нельзя")
+                self.texture_mode = False
+                return
+            if path:
+                target["texture"] = path
+                self.set_status(f"{label}: {texture_label(path)} (только этот)")
+            else:
+                target.pop("texture", None)
+                self.set_status(f"{label}: сброс (только этот)")
+            self.texture_mode = False
+            self.texture_instance_ref = None
+            return
+
+        key = self.texture_edit_key
+        label = self.texture_edit_label or key
+        if not key:
+            key, label = self._texture_edit_context()
+        if not key:
+            self.set_status(label or "Нельзя")
             self.texture_mode = False
             return
+        stamp_override_on_level(self.level, key, path)
         if path:
-            target["texture"] = path
-            self.set_status(f"{label}: {texture_label(path)}")
+            self.set_status(f"{label}: {texture_label(path)} (на все)")
         else:
-            target.pop("texture", None)
-            self.set_status(f"{label}: текстура сброшена (дефолт)")
+            self.set_status(f"{label}: сброс на дефолт (на все)")
         self.texture_mode = False
+        self.texture_edit_key = None
 
     def draw_texture_overlay(self):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -453,15 +560,23 @@ class LevelEditor:
 
         panel = pygame.Rect(60, 40, WIDTH - 120, HEIGHT - 80)
         pygame.draw.rect(self.screen, (24, 28, 38), panel, border_radius=8)
-        pygame.draw.rect(self.screen, (120, 200, 160), panel, 2, border_radius=8)
+        border = (120, 200, 160) if getattr(self, "texture_scope", "type") == "type" else (200, 180, 100)
+        pygame.draw.rect(self.screen, border, panel, 2, border_radius=8)
 
-        target, label = self._selected_texture_target()
-        title = self.font_bold.render(f"Текстура — {label}", True, (255, 255, 255))
+        label = self.texture_edit_label or "?"
+        if getattr(self, "texture_scope", "type") == "instance":
+            title = self.font_bold.render(f"Текстура объекта — {label}", True, (255, 255, 255))
+            target = self.texture_instance_ref or {}
+            cur = target.get("texture")
+            hint = "применится только к этому объекту"
+        else:
+            title = self.font_bold.render(f"Текстура типа — {label}", True, (255, 255, 255))
+            cur = get_override(self.level, self.texture_edit_key) if self.texture_edit_key else None
+            hint = "применится ко ВСЕМ объектам типа"
         self.screen.blit(title, (panel.x + 16, panel.y + 12))
-        cur = (target or {}).get("texture")
         cur_txt = texture_label(cur) if cur else "(дефолт)"
         self.screen.blit(
-            self.font_sm.render(f"Сейчас: {cur_txt}", True, (180, 200, 190)),
+            self.font_sm.render(f"Сейчас: {cur_txt}  ·  {hint}", True, (180, 200, 190)),
             (panel.x + 16, panel.y + 40),
         )
         if self.texture_filter:
@@ -507,7 +622,10 @@ class LevelEditor:
                 py = preview.centery - img.get_height() // 2
                 self.screen.blit(img, (px, py))
 
-        help_txt = "↑/↓ · Enter применить · 0 сброс · Backspace фильтр · Esc отмена"
+        if getattr(self, "texture_scope", "type") == "instance":
+            help_txt = "↑/↓ · Enter только этот · 0 сброс · Esc  |  I=тип, U=точка"
+        else:
+            help_txt = "↑/↓ · Enter на ВСЕ · 0 сброс · Esc  |  I=тип, U=точка"
         self.screen.blit(
             self.font_sm.render(help_txt, True, (130, 140, 150)),
             (panel.x + 16, panel.bottom - 28),
@@ -521,6 +639,7 @@ class LevelEditor:
             return
         if event.key == pygame.K_ESCAPE:
             self.texture_mode = False
+            self.texture_instance_ref = None
             self.set_status("Выбор текстуры отменён")
             return
         if event.key == pygame.K_RETURN:
@@ -1112,13 +1231,13 @@ class LevelEditor:
         self.screen.blit(tip, (8, gy + 6))
 
         plat_img = self.images["platform"]
+        plat_override = get_override(self.level, "platform")
         for i, p in enumerate(self.level["platforms"]):
             sx, sy = self.screen_x(p["x"]), self.screen_y(p["y"])
             img = plat_img
-            if p.get("texture"):
-                custom = load_texture(
-                    p["texture"], self.texture_cache, fit=(105, PLATFORM_H),
-                )
+            tex = p.get("texture") or plat_override
+            if tex:
+                custom = load_texture(tex, self.texture_cache, fit=(105, PLATFORM_H))
                 if custom is not None:
                     img = custom
             self.screen.blit(img, (sx, sy))
@@ -1126,13 +1245,13 @@ class LevelEditor:
                 pygame.draw.rect(self.screen, (255, 80, 80), (sx - 2, sy - 2, 109, 24), 2)
 
         wall_img = self.images["wall"]
+        wall_override = get_override(self.level, "wall")
         for i, w in enumerate(self.level.get("walls", [])):
             sx, sy = self.screen_x(w["x"]), self.screen_y(w["y"])
             img = wall_img
-            if w.get("texture"):
-                custom = load_texture(
-                    w["texture"], self.texture_cache, fit=(WALL_W, WALL_H),
-                )
+            tex = w.get("texture") or wall_override
+            if tex:
+                custom = load_texture(tex, self.texture_cache, fit=(WALL_W, WALL_H))
                 if custom is not None:
                     img = custom
             self.screen.blit(img, (sx, sy))
@@ -1185,10 +1304,9 @@ class LevelEditor:
             img_key = meta.get("image", "sprint_skill")
             color = meta.get("color", OBJECT_COLORS["ability"])
             img = self.images[img_key]
-            if obj.get("texture"):
-                custom = load_texture(
-                    obj["texture"], self.texture_cache, max_size=(48, 48),
-                )
+            tex = obj.get("texture") or get_override(self.level, ability_override_key(aid))
+            if tex:
+                custom = load_texture(tex, self.texture_cache, max_size=(48, 48))
                 if custom is not None:
                     img = custom
             self.screen.blit(img, (sx, sy))
@@ -1202,12 +1320,12 @@ class LevelEditor:
             return
 
         color = OBJECT_COLORS.get(t, (100, 100, 100))
+        type_tex = get_override(self.level, t) if t in ("extra_life", "npc", "teleport") else None
         if t == "extra_life":
             img = self.images["extra_life"]
-            if obj.get("texture"):
-                custom = load_texture(
-                    obj["texture"], self.texture_cache, max_size=(48, 48),
-                )
+            tex = obj.get("texture") or type_tex
+            if tex:
+                custom = load_texture(tex, self.texture_cache, max_size=(48, 48))
                 if custom is not None:
                     img = custom
             self.screen.blit(img, (sx, sy))
@@ -1217,15 +1335,10 @@ class LevelEditor:
                     (sx - 2, sy - 2, img.get_width() + 4, img.get_height() + 4), 2,
                 )
         elif t == "teleport":
-            if obj.get("texture"):
-                custom = load_texture(
-                    obj["texture"], self.texture_cache, max_size=(48, 48),
-                )
-                if custom is not None:
-                    self.screen.blit(custom, (sx, sy))
-                else:
-                    pygame.draw.circle(self.screen, color, (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R)
-                    pygame.draw.circle(self.screen, (255, 255, 255), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R - 6, 2)
+            tex = obj.get("texture") or type_tex
+            custom = load_texture(tex, self.texture_cache, max_size=(48, 48)) if tex else None
+            if custom is not None:
+                self.screen.blit(custom, (sx, sy))
             else:
                 pygame.draw.circle(self.screen, color, (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R)
                 pygame.draw.circle(self.screen, (255, 255, 255), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R - 6, 2)
@@ -1239,11 +1352,8 @@ class LevelEditor:
             if selected:
                 pygame.draw.circle(self.screen, (255, 80, 80), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R + 4, 2)
         elif t == "npc":
-            custom = None
-            if obj.get("texture"):
-                custom = load_texture(
-                    obj["texture"], self.texture_cache, max_size=(80, 100),
-                )
+            tex = obj.get("texture") or type_tex
+            custom = load_texture(tex, self.texture_cache, max_size=(80, 100)) if tex else None
             if custom is not None:
                 self.screen.blit(custom, (sx, sy))
                 body = pygame.Rect(sx, sy, custom.get_width(), custom.get_height())
@@ -1323,7 +1433,8 @@ class LevelEditor:
             "T — цель телепорта",
             "Enter — диалог NPC",
             "M — мувсеты босса",
-            "I — текстура объекта",
+            "I — текстура типа (на все)",
+            "U — текстура одного объекта",
             "Ctrl+S — сохранить",
             "Del — удалить выделение",
         ]
@@ -1370,7 +1481,19 @@ class LevelEditor:
             if self.tool == "boss":
                 return [f"Ставится: {boss_label(self.boss_variant)}"]
             if self.tool == "ability":
-                return [f"Ставится: {ability_label(self.ability_variant)}"]
+                ov = get_override(self.level, ability_override_key(self.ability_variant))
+                lines = [f"Ставится: {ability_label(self.ability_variant)}"]
+                if ov:
+                    lines.append(f"tex={texture_label(ov, 28)}")
+                lines.append("I — текстура для ВСЕХ таких")
+                return lines
+            if self.tool in TEXTUREABLE_TOOLS:
+                ov = get_override(self.level, override_key_for_tool(self.tool))
+                lines = [f"Инструмент: {OBJECT_LABELS.get(self.tool, self.tool)}"]
+                if ov:
+                    lines.append(f"tex={texture_label(ov, 28)}")
+                lines.append("I — текстура для ВСЕХ таких")
+                return lines
             return ["(нет выделения)"]
         kind, idx = self.selected
         if kind == "spawn":
@@ -1379,16 +1502,18 @@ class LevelEditor:
         if kind == "platform":
             p = self.level["platforms"][idx]
             lines = [f"Платформа #{idx}", f"x={p['x']} y={p['y']}"]
-            if p.get("texture"):
-                lines.append(f"tex={texture_label(p['texture'], 28)}")
-            lines.append("I — текстура")
+            ov = p.get("texture") or get_override(self.level, "platform")
+            if ov:
+                lines.append(f"tex={texture_label(ov, 28)}")
+            lines.append("I — все платформы · U — эта")
             return lines
         if kind == "wall":
             w = self.level["walls"][idx]
             lines = [f"Стена #{idx}", f"x={w['x']} y={w['y']}"]
-            if w.get("texture"):
-                lines.append(f"tex={texture_label(w['texture'], 28)}")
-            lines.append("I — текстура")
+            ov = w.get("texture") or get_override(self.level, "wall")
+            if ov:
+                lines.append(f"tex={texture_label(ov, 28)}")
+            lines.append("I — все стены · U — эта")
             return lines
         obj = self.level["objects"][idx]
         if _is_boss_obj(obj):
@@ -1421,16 +1546,19 @@ class LevelEditor:
                 f"клавиша: {meta.get('key_hint', '?')}",
                 f"x={obj['x']} y={obj['y']}",
             ]
-            if obj.get("texture"):
-                lines.append(f"tex={texture_label(obj['texture'], 28)}")
-            lines.append("I — текстура")
+            ov = obj.get("texture") or get_override(self.level, ability_override_key(aid))
+            if ov:
+                lines.append(f"tex={texture_label(ov, 28)}")
+            lines.append("I — все такие · U — эта")
             return lines
         lines = [
             f"{OBJECT_LABELS.get(obj['type'], obj['type'])}",
             f"x={obj['x']} y={obj['y']}",
         ]
-        if obj.get("texture"):
-            lines.append(f"tex={texture_label(obj['texture'], 28)}")
+        key = override_key_for_object(obj)
+        ov = obj.get("texture") or (get_override(self.level, key) if key else None)
+        if ov:
+            lines.append(f"tex={texture_label(ov, 28)}")
         if obj["type"] == "teleport":
             lines += [
                 f"→ ({obj.get('target_x')}, {obj.get('target_y')})",
@@ -1444,7 +1572,7 @@ class LevelEditor:
                 lines.append(f"  {i + 1}. {d[:26]}")
             lines.append("Enter — править диалог")
         if obj.get("type") in TEXTUREABLE_OBJECT_TYPES:
-            lines.append("I — текстура")
+            lines.append("I — все такие · U — эта")
         return lines
 
     def handle_event(self, event):
@@ -1493,6 +1621,9 @@ class LevelEditor:
                 return True
             if event.key == pygame.K_i:
                 self.begin_texture_edit()
+                return True
+            if event.key == pygame.K_u:
+                self.begin_texture_edit_instance()
                 return True
             if event.key == pygame.K_RETURN:
                 self.begin_dialog_edit()

@@ -200,6 +200,7 @@ class GameState:
         self.images = images
         self.lookdir = 1
         self.texture_cache = {}
+        self.texture_overrides = {}
 
         # Пикапы с уровня (extra_life / ability)
         self.level_pickups = []
@@ -277,6 +278,7 @@ class GameState:
         self.npcs = []
         self.teleports = []
         self.boss_alive = False
+        self.texture_overrides = dict(level.get("texture_overrides") or {})
 
         for obj in level.get("objects", []):
             t = obj.get("type")
@@ -311,37 +313,42 @@ class GameState:
                 if hasattr(self, "_boss_base_y"):
                     del self._boss_base_y
             elif t == "ability":
+                aid = obj.get("id", "sprint")
+                tex = obj.get("texture") or self.texture_overrides.get(f"ability:{aid}")
                 self.level_pickups.append({
                     "type": "ability",
-                    "id": obj.get("id", "sprint"),
+                    "id": aid,
                     "x": obj["x"],
                     "y": obj["y"],
-                    "texture": obj.get("texture"),
+                    "texture": tex,
                     "collected": False,
                 })
             elif t == "extra_life":
+                tex = obj.get("texture") or self.texture_overrides.get("extra_life")
                 self.level_pickups.append({
                     "type": "extra_life",
                     "x": obj["x"],
                     "y": obj["y"],
-                    "texture": obj.get("texture"),
+                    "texture": tex,
                     "collected": False,
                 })
             elif t == "npc":
+                tex = obj.get("texture") or self.texture_overrides.get("npc")
                 self.npcs.append({
                     "x": obj["x"],
                     "y": obj["y"],
                     "name": obj.get("name", "NPC"),
                     "dialog": list(obj.get("dialog") or ["..."]),
-                    "texture": obj.get("texture"),
+                    "texture": tex,
                 })
             elif t == "teleport":
+                tex = obj.get("texture") or self.texture_overrides.get("teleport")
                 self.teleports.append({
                     "x": obj["x"],
                     "y": obj["y"],
                     "target_x": obj.get("target_x", obj["x"] + 200),
                     "target_y": obj.get("target_y", obj["y"]),
-                    "texture": obj.get("texture"),
+                    "texture": tex,
                 })
 
         lives = [p for p in self.level_pickups if p["type"] == "extra_life"]

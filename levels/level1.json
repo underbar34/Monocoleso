@@ -413,8 +413,7 @@
     },
     {
       "x": 1720,
-      "y": -310,
-      "texture": "Assets/locat/platform.png"
+      "y": -310
     }
   ],
   "world_height": 2000,

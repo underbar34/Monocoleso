@@ -236,12 +236,16 @@ def render(screen, state, pls, ground_y, blur, walls=None):
         img_key = ABILITY_CATALOG.get(aid, {}).get(
             "image", "dash_skill" if aid == "dash" else "sprint_skill",
         )
-        screen.blit(state.images[img_key], (item["x"] - cam_x, item["y"] - cam_y))
+        ov = getattr(state, "texture_overrides", {}).get(f"ability:{aid}")
+        img = _resolve_img(state, item.get("texture") or ov, img_key, max_size=(56, 56))
+        screen.blit(img, (item["x"] - cam_x, item["y"] - cam_y))
         drawn_loot.add(id(item))
 
     if state.sprint_pickup and state.sprint_pickup.get("active") and id(state.sprint_pickup) not in drawn_loot:
         p = state.sprint_pickup
-        screen.blit(state.images['sprint_skill'], (p["x"] - cam_x, p["y"] - cam_y))
+        ov = getattr(state, "texture_overrides", {}).get("ability:sprint")
+        img = _resolve_img(state, p.get("texture") or ov, "sprint_skill", max_size=(56, 56))
+        screen.blit(img, (p["x"] - cam_x, p["y"] - cam_y))
 
     blur.update(state.playerx, state.playery, state.player, strong=False)
     blur.draw(screen, cam_x, cam_y)

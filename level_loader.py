@@ -192,6 +192,7 @@ def empty_level(name="level1", world_width=6200, ground_y=726):
         "platforms": [],
         "walls": [],
         "objects": [],
+        "texture_overrides": {},
     }
 
 
@@ -208,7 +209,10 @@ def load_level(path=DEFAULT_LEVEL_PATH):
     data.setdefault("player_spawn", {"x": 120, "y": 640})
     data.setdefault("platforms", [])
     data.setdefault("walls", [])
+    data.setdefault("texture_overrides", {})
     data["objects"] = [normalize_object(o) for o in data.get("objects", [])]
+    from textures import apply_overrides_to_level
+    apply_overrides_to_level(data)
     return data
 
 
@@ -224,15 +228,17 @@ def save_level(data, path=DEFAULT_LEVEL_PATH):
 
 
 def platforms_from_level(level):
+    ov = (level.get("texture_overrides") or {}).get("platform")
     return [
-        Platform(p["x"], p["y"], p.get("texture"))
+        Platform(p["x"], p["y"], p.get("texture") or ov)
         for p in level.get("platforms", [])
     ]
 
 
 def walls_from_level(level):
+    ov = (level.get("texture_overrides") or {}).get("wall")
     return [
-        Wall(w["x"], w["y"], w.get("texture"))
+        Wall(w["x"], w["y"], w.get("texture") or ov)
         for w in level.get("walls", [])
     ]
 
