@@ -1,5 +1,6 @@
 # logic.py
 import math
+import os
 import pygame
 from config import (
     GROUND_Y, SPEED_PLAYER, SPEED_PLAYER_Y, ATAKA_ZADERZHKA,
@@ -666,12 +667,134 @@ def _find_nearby_teleport(state):
     return None
 
 
+def _find_nearby_checkpoint(state):
+    for cp in getattr(state, "checkpoints", []) or []:
+        if _near_rect(state.playerx, state.playery, cp["x"], cp["y"], 36, 48, pad=16):
+            return cp
+    return None
+
+
+def use_checkpoint(state, cp):
+    """E у точки сохранения: пишет save.json и запоминает респавн."""
+    from savegame import write_save
+
+    data = {
+        "level_path": getattr(state, "current_level_path", None) or "levels/level1.json",
+        "x": float(cp["x"]),
+        "y": float(cp["y"]),
+        "health": HEALTH_MAX,
+        "sprint_unlocked": bool(getattr(state, "sprint_unlocked", False)),
+        "dash_unlocked": bool(getattr(state, "dash_unlocked", False)),
+        "akumpower": int(getattr(state, "akumpower", 0)),
+    }
+    state.checkpoint = write_save(data)
+    state.save_flash = 90
+    state.interact_hint = "Сохранено!"
+
+
+def apply_checkpoint_progress(state, data):
+    """Восстанавливает прогресс из сохранения (абилки и т.п.)."""
+    if not data:
+        return
+    state.sprint_unlocked = bool(data.get("sprint_unlocked", False))
+    state.dash_unlocked = bool(data.get("dash_unlocked", False))
+    state.akumpower = int(data.get("akumpower", 0))
+    hp = int(data.get("health", HEALTH_MAX))
+    state.health = max(1, min(HEALTH_MAX, hp))
+
+
+def request_respawn_from_checkpoint(state):
+    """При смерти: респавн у последнего сохранения. True если удалось."""
+    from savegame import read_save
+    from level_loader import resolve_level_path
+
+    data = getattr(state, "checkpoint", None) or read_save()
+    if not data:
+        return False
+
+    path = resolve_level_path(data.get("level_path")) or data.get("level_path")
+    if not path or not os.path.exists(path):
+        return False
+
+    apply_checkpoint_progress(state, data)
+    state.health = HEALTH_MAX
+    state.neuyazvimost = 0
+    state.x_vel = 0
+    state.playermovey = 0
+    state.y_vel = 0
+    state.kb_vx = 0.0
+    state.kb_vy = 0.0
+    state.dialog = None
+    state.atakapl = False
+    state.flagatak = 0
+    state.boss_arena_locked = False
+
+    cur = getattr(state, "current_level_path", None)
+    same = cur and os.path.abspath(cur) == os.path.abspath(path)
+    if same:
+        state.playerx = float(data["x"])
+        state.playery = float(data["y"])
+        state.cam_x = None
+        state.cam_y = None
+        state.checkpoint = data
+        return True
+
+    state.pending_respawn = {
+        "path": path,
+        "spawn_x": float(data["x"]),
+        "spawn_y": float(data["y"]),
+        "label": os.path.splitext(os.path.basename(path))[0],
+        "progress": data,
+    }
+    state.checkpoint = data
+    return True
+
+
+def _request_level_transition(state, tp):
+    """Ставит переход на другой уровень (обработает main после кадра)."""
+    from level_loader import resolve_level_path, load_level
+
+    path = resolve_level_path(tp.get("target_level"))
+    if not path:
+        return False
+    if not os.path.exists(path):
+        state.interact_hint = f"Нет файла: {path}"
+        return False
+
+    dest = load_level(path)
+    spawn = dest.get("player_spawn") or {}
+    sx = tp.get("target_x")
+    sy = tp.get("target_y")
+    # если цель не задана явно — спавн целевого уровня
+    if sx is None:
+        sx = spawn.get("x", 120)
+    if sy is None:
+        sy = spawn.get("y", 640)
+    state.pending_level = {
+        "path": path,
+        "spawn_x": float(sx),
+        "spawn_y": float(sy),
+        "label": dest.get("name") or os.path.splitext(os.path.basename(path))[0],
+    }
+    return True
+
+
 def update_interactions(state):
     """Подсказки взаимодействия и телепорт при касании метки."""
+    if getattr(state, "save_flash", 0) > 0:
+        state.save_flash -= 1
+        state.interact_hint = "Сохранено!"
+        if state.dialog is not None:
+            state.interact_hint = "E — дальше"
+        return
+
     state.interact_hint = None
 
     if state.dialog is not None:
         state.interact_hint = "E — дальше"
+        return
+
+    if getattr(state, "pending_level", None) or getattr(state, "pending_respawn", None):
         return
 
     if state.teleport_cooldown > 0:
@@ -681,16 +804,30 @@ def update_interactions(state):
     if npc is not None:
         state.interact_hint = f"E — говорить ({npc['name']})"
 
+    cp = _find_nearby_checkpoint(state)
+    if cp is not None and state.interact_hint is None:
+        state.interact_hint = "E — сохранить"
+
     tp = _find_nearby_teleport(state)
     if tp is not None:
+        dest = (tp.get("target_level") or "").strip()
         if state.interact_hint is None:
-            state.interact_hint = "Телепорт..."
+            if dest:
+                state.interact_hint = f"Телепорт → {dest}"
+            else:
+                state.interact_hint = "Телепорт..."
         if state.teleport_cooldown <= 0:
-            state.playerx = tp["target_x"]
-            state.playery = tp["target_y"]
-            state.teleport_cooldown = 45
-            state.x_vel = 0
-            state.playermovey = 0
+            if dest:
+                if _request_level_transition(state, tp):
+                    state.teleport_cooldown = 45
+                    state.x_vel = 0
+                    state.playermovey = 0
+            else:
+                state.playerx = tp["target_x"]
+                state.playery = tp["target_y"]
+                state.teleport_cooldown = 45
+                state.x_vel = 0
+                state.playermovey = 0
 
 
 def _advance_dialog(state):
@@ -712,7 +849,7 @@ def _start_dialog(state, npc):
 
 
 def try_interact(state):
-    """Нажатие E: диалог с NPC или лечение акумом."""
+    """Нажатие E: диалог, сохранение или лечение акумом."""
     if state.dialog is not None:
         _advance_dialog(state)
         return
@@ -720,6 +857,11 @@ def try_interact(state):
     npc_i, npc = _find_nearby_npc(state)
     if npc is not None:
         _start_dialog(state, npc)
+        return
+
+    cp = _find_nearby_checkpoint(state)
+    if cp is not None:
+        use_checkpoint(state, cp)
         return
 
     if state.akumpower >= MAX_AKUM_POWER:

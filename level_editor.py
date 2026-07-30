@@ -8,12 +8,15 @@
   ЛКМ          — поставить выбранный объект / выделить / перетащить
   ПКМ          — удалить объект/платформу под курсором
   WASD/стрелки — камера
-  1–8          — выбор инструмента
-  T            — для телепорта: клик задаёт точку назначения
+  1–9          — выбор инструмента
+  T            — для телепорта: клик задаёт точку назначения (x,y)
+  L            — для телепорта: цикл целевого уровня (тот же / levelN.json)
   Enter        — редактировать диалог выделенного NPC
   M            — мувсеты выделенного босса
   I            — текстура ТИПА (все абилки спринта / все платформы / …)
   U            — текстура одного выделенного объекта
+  [ / ]        — предыдущий / следующий уровень в levels/
+  Ctrl+N       — создать новый пустой уровень и открыть
   Delete/Backspace — удалить выделение
   Ctrl+S       — сохранить
   Ctrl+O       — перезагрузить файл
@@ -27,6 +30,7 @@ import pygame
 from config import WIDTH, HEIGHT, FPS, load_images, WALL_W, WALL_H
 from level_loader import (
     DEFAULT_LEVEL_PATH,
+    LEVELS_DIR,
     TOOL_CATEGORIES,
     OBJECT_COLORS,
     OBJECT_LABELS,
@@ -39,6 +43,10 @@ from level_loader import (
     boss_label,
     boss_drop,
     catalog_moveset,
+    list_levels,
+    resolve_level_path,
+    create_level_file,
+    level_display_name,
 )
 from textures import (
     list_asset_textures,
@@ -187,6 +195,11 @@ class LevelEditor:
             if obj["type"] == "teleport":
                 cx, cy = obj["x"] + TELEPORT_R, obj["y"] + TELEPORT_R
                 if (wx - cx) ** 2 + (wy - cy) ** 2 <= (TELEPORT_R + 8) ** 2:
+                    return ("object", i)
+        for i, obj in enumerate(self.level["objects"]):
+            if obj["type"] == "checkpoint":
+                r = pygame.Rect(obj["x"], obj["y"], 40, 48)
+                if r.inflate(HIT_PAD, HIT_PAD).collidepoint(wx, wy):
                     return ("object", i)
         for i, obj in enumerate(self.level["objects"]):
             if _is_ability_obj(obj) or obj["type"] == "extra_life":
@@ -342,7 +355,80 @@ class LevelEditor:
         obj["target_x"] = int(_snap(wx))
         obj["target_y"] = int(_snap(wy))
         self.setting_teleport_target = False
-        self.set_status(f"Цель телепорта: ({obj['target_x']}, {obj['target_y']})")
+        dest = (obj.get("target_level") or "").strip()
+        where = dest if dest else "этот уровень"
+        self.set_status(f"Спавн → ({obj['target_x']}, {obj['target_y']}) в {where}")
+
+    def cycle_teleport_level(self):
+        """L: цикл целевого уровня телепорта — '' (этот) → каждый .json в levels/."""
+        obj = self.get_selected_obj()
+        if not obj or obj.get("type") != "teleport":
+            self.set_status("Выделите телепорт, затем L")
+            return
+        names = [""] + list_levels()
+        cur = (obj.get("target_level") or "").strip()
+        # нормализуем к basename
+        if cur:
+            cur_base = os.path.basename(resolve_level_path(cur) or cur)
+            if not cur_base.endswith(".json"):
+                cur_base += ".json"
+        else:
+            cur_base = ""
+        try:
+            idx = names.index(cur_base)
+        except ValueError:
+            idx = 0
+        nxt = names[(idx + 1) % len(names)]
+        obj["target_level"] = nxt
+        if nxt:
+            self.set_status(f"Телепорт → уровень {nxt} (T = координаты спавна)")
+        else:
+            self.set_status("Телепорт → этот же уровень (T = точка)")
+
+    def switch_level_file(self, delta):
+        """[ / ] — соседний файл в levels/."""
+        names = list_levels()
+        if not names:
+            self.set_status("В levels/ нет .json")
+            return
+        cur = os.path.basename(self.path)
+        try:
+            idx = names.index(cur)
+        except ValueError:
+            idx = 0
+        nxt = names[(idx + delta) % len(names)]
+        new_path = os.path.join(LEVELS_DIR, nxt)
+        if os.path.abspath(new_path) == os.path.abspath(self.path):
+            return
+        self.save()
+        self.path = new_path
+        self.level = load_level(self.path)
+        self.selected = None
+        self.cam_x = 0
+        self.cam_y = 0
+        pygame.display.set_caption(f"Monocoleso Editor — {self.path}")
+        self.set_status(f"Открыт уровень: {self.path}")
+
+    def create_new_level(self):
+        """Ctrl+N — новый levels/levelN.json и открыть его."""
+        existing = set(list_levels())
+        n = 1
+        while f"level{n}.json" in existing:
+            n += 1
+        try:
+            path = create_level_file(f"level{n}")
+        except FileExistsError:
+            self.set_status("Не удалось создать уровень")
+            return
+        self.save()
+        self.path = path
+        self.level = load_level(self.path)
+        self.selected = None
+        self.cam_x = 0
+        self.cam_y = 0
+        pygame.display.set_caption(f"Monocoleso Editor — {self.path}")
+        self.set_status(f"Создан и открыт: {path}")
+
 
     def begin_dialog_edit(self):
         obj = self.get_selected_obj()
@@ -1320,7 +1406,7 @@ class LevelEditor:
             return
 
         color = OBJECT_COLORS.get(t, (100, 100, 100))
-        type_tex = get_override(self.level, t) if t in ("extra_life", "npc", "teleport") else None
+        type_tex = get_override(self.level, t) if t in ("extra_life", "npc", "teleport", "checkpoint") else None
         if t == "extra_life":
             img = self.images["extra_life"]
             tex = obj.get("texture") or type_tex
@@ -1351,6 +1437,20 @@ class LevelEditor:
             pygame.draw.circle(self.screen, (255, 80, 80), (tx, ty), 8, 2)
             if selected:
                 pygame.draw.circle(self.screen, (255, 80, 80), (sx + TELEPORT_R, sy + TELEPORT_R), TELEPORT_R + 4, 2)
+        elif t == "checkpoint":
+            tex = obj.get("texture") or type_tex
+            custom = load_texture(tex, self.texture_cache, max_size=(48, 64)) if tex else None
+            if custom is not None:
+                self.screen.blit(custom, (sx, sy))
+                body = pygame.Rect(sx, sy, custom.get_width(), custom.get_height())
+            else:
+                body = pygame.Rect(sx, sy, 40, 48)
+                pygame.draw.rect(self.screen, (90, 70, 40), (sx + 14, sy + 8, 6, 40))
+                flag = [(sx + 20, sy + 8), (sx + 42, sy + 18), (sx + 20, sy + 28)]
+                pygame.draw.polygon(self.screen, color, flag)
+                pygame.draw.circle(self.screen, (255, 240, 150), (sx + 17, sy + 8), 4)
+            if selected:
+                pygame.draw.rect(self.screen, (255, 80, 80), body.inflate(6, 6), 2)
         elif t == "npc":
             tex = obj.get("texture") or type_tex
             custom = load_texture(tex, self.texture_cache, max_size=(80, 100)) if tex else None
@@ -1429,14 +1529,15 @@ class LevelEditor:
         help_lines = [
             "ЛКМ — поставить/тащить",
             "ПКМ — удалить",
-            "WASD/стрелки — камера",
-            "T — цель телепорта",
+            "WASD — камера",
+            "T — цель телепорта (x,y)",
+            "L — уровень телепорта",
+            "[ / ] — др. уровень",
+            "Ctrl+N — новый уровень",
             "Enter — диалог NPC",
             "M — мувсеты босса",
-            "I — текстура типа (на все)",
-            "U — текстура одного объекта",
+            "I/U — текстуры",
             "Ctrl+S — сохранить",
-            "Del — удалить выделение",
         ]
         htitle = self.font_bold.render("Управление", True, (255, 255, 255))
         self.screen.blit(htitle, (WIDTH - PANEL_W + 14, y))
@@ -1560,9 +1661,12 @@ class LevelEditor:
         if ov:
             lines.append(f"tex={texture_label(ov, 28)}")
         if obj["type"] == "teleport":
+            dest = (obj.get("target_level") or "").strip()
             lines += [
                 f"→ ({obj.get('target_x')}, {obj.get('target_y')})",
-                "T + клик = новая цель",
+                f"уровень: {dest or '(этот)'}",
+                "T + клик = координаты",
+                "L = цикл уровней",
             ]
         elif obj["type"] == "npc":
             lines.append(f"name={obj.get('name', 'NPC')}")
@@ -1601,6 +1705,15 @@ class LevelEditor:
             if event.key == pygame.K_o and (mods & pygame.KMOD_CTRL):
                 self.reload()
                 return True
+            if event.key == pygame.K_n and (mods & pygame.KMOD_CTRL):
+                self.create_new_level()
+                return True
+            if event.key == pygame.K_LEFTBRACKET:
+                self.switch_level_file(-1)
+                return True
+            if event.key == pygame.K_RIGHTBRACKET:
+                self.switch_level_file(1)
+                return True
             if event.key in (pygame.K_DELETE, pygame.K_BACKSPACE):
                 self.delete_selected()
                 return True
@@ -1612,9 +1725,16 @@ class LevelEditor:
                 obj = self.get_selected_obj()
                 if obj and obj.get("type") == "teleport":
                     self.setting_teleport_target = True
-                    self.set_status("Кликните точку назначения телепорта")
+                    dest = (obj.get("target_level") or "").strip()
+                    if dest:
+                        self.set_status(f"Клик = спавн в {dest}")
+                    else:
+                        self.set_status("Кликните точку назначения телепорта")
                 else:
                     self.set_status("Сначала выделите телепорт")
+                return True
+            if event.key == pygame.K_l:
+                self.cycle_teleport_level()
                 return True
             if event.key == pygame.K_m:
                 self.begin_moveset_edit()
@@ -1628,7 +1748,7 @@ class LevelEditor:
             if event.key == pygame.K_RETURN:
                 self.begin_dialog_edit()
                 return True
-            if pygame.K_1 <= event.key <= pygame.K_8:
+            if pygame.K_1 <= event.key <= pygame.K_9:
                 idx = event.key - pygame.K_1
                 if idx < len(TOOLS):
                     self.tool = TOOLS[idx]

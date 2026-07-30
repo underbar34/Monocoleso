@@ -1,5 +1,5 @@
 {
-  "name": "level1",
+  "name": "Обучающая Локация",
   "world_width": 6200,
   "ground_y": 726,
   "player_spawn": {
@@ -646,8 +646,9 @@
       "type": "teleport",
       "x": 3660,
       "y": -820,
-      "target_x": 8230,
-      "target_y": -1005
+      "target_x": 145,
+      "target_y": -155,
+      "target_level": "level2.json"
     },
     {
       "type": "boss",
@@ -919,5 +920,8 @@
         }
       }
     }
-  ]
+  ],
+  "texture_overrides": {
+    "ability:sprint": "Assets/bg/uskorenie.png"
+  }
 }

@@ -4,7 +4,58 @@ import json
 import os
 from platforms import Platform, Wall
 
-DEFAULT_LEVEL_PATH = os.path.join("levels", "level1.json")
+LEVELS_DIR = "levels"
+DEFAULT_LEVEL_PATH = os.path.join(LEVELS_DIR, "level1.json")
+
+
+def list_levels(directory=LEVELS_DIR):
+    """Список .json уровней (имена файлов, отсортированы)."""
+    if not os.path.isdir(directory):
+        return []
+    names = [
+        f for f in os.listdir(directory)
+        if f.lower().endswith(".json") and os.path.isfile(os.path.join(directory, f))
+    ]
+    return sorted(names)
+
+
+def resolve_level_path(name_or_path, directory=LEVELS_DIR):
+    """
+    Нормализует ссылку на уровень:
+      level2 / level2.json / levels/level2.json → levels/level2.json
+    Пустая строка / None → None (телепорт в том же уровне).
+    """
+    if not name_or_path:
+        return None
+    raw = str(name_or_path).strip().replace("\\", "/")
+    if not raw:
+        return None
+    if raw.lower().endswith(".json"):
+        base = raw
+    else:
+        base = raw + ".json"
+    if "/" in base or base.startswith(directory):
+        path = base
+    else:
+        path = os.path.join(directory, os.path.basename(base))
+    return path.replace("\\", "/")
+
+
+def level_display_name(path):
+    return os.path.splitext(os.path.basename(path or ""))[0] or "?"
+
+
+def create_level_file(name, directory=LEVELS_DIR, **kwargs):
+    """Создаёт новый пустой уровень. name без пути, с или без .json."""
+    stem = os.path.splitext(os.path.basename(str(name).strip()))[0]
+    if not stem:
+        raise ValueError("Пустое имя уровня")
+    path = os.path.join(directory, stem + ".json")
+    if os.path.exists(path):
+        raise FileExistsError(path)
+    data = empty_level(name=stem, **kwargs)
+    save_level(data, path)
+    return path
 
 # --- каталоги (расширяются здесь) ---
 
@@ -52,6 +103,7 @@ TOOL_CATEGORIES = (
     "extra_life",
     "teleport",
     "npc",
+    "checkpoint",
 )
 
 OBJECT_COLORS = {
@@ -62,6 +114,7 @@ OBJECT_COLORS = {
     "dash_skill": (255, 87, 34),     # legacy alias
     "teleport": (0, 188, 212),
     "npc": (255, 152, 0),
+    "checkpoint": (255, 215, 64),
     "player_spawn": (244, 67, 54),
     "platform": (120, 120, 120),
     "wall": (90, 90, 110),
@@ -75,6 +128,7 @@ OBJECT_LABELS = {
     "dash_skill": "Рывок",
     "teleport": "Телепорт",
     "npc": "NPC",
+    "checkpoint": "Сохранение",
     "player_spawn": "Спавн",
     "platform": "Платформа",
     "wall": "Стена",
@@ -128,6 +182,15 @@ def normalize_object(obj):
             o["moveset"] = deep_copy_moveset(cat)
         elif o.get("moveset") and cat:
             o["moveset"] = resolve_moveset(o, cat)
+    elif t == "teleport":
+        o.setdefault("target_x", o.get("x", 0) + 200)
+        o.setdefault("target_y", o.get("y", 0))
+        # "" / отсутствует = тот же уровень; иначе имя/путь другого .json
+        tl = o.get("target_level")
+        if tl is None:
+            o["target_level"] = ""
+        else:
+            o["target_level"] = str(tl).strip()
     return o
 
 
@@ -166,6 +229,7 @@ def default_object(category, x, y, variant_id=None):
             "y": y,
             "target_x": x + 200,
             "target_y": y,
+            "target_level": "",
         }
     if category == "npc":
         return {
@@ -175,6 +239,8 @@ def default_object(category, x, y, variant_id=None):
             "name": "NPC",
             "dialog": ["Привет!", "Нажми E, чтобы продолжить."],
         }
+    if category == "checkpoint":
+        return {"type": "checkpoint", "x": x, "y": y}
     # legacy direct types
     if category in _LEGACY_ABILITY:
         return default_object("ability", x, y, _LEGACY_ABILITY[category])

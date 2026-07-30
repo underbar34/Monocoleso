@@ -123,7 +123,7 @@ def _draw_menu(screen, layout):
     pygame.display.flip()
 
 
-def _run_authors_screen(screen, clock, assets):
+def _run_authors_screen(screen, clock, assets, backdrop=None):
     title_font = _make_font(48, bold=True)
     body_font = _make_font(28)
     hint_font = _make_font(22)
@@ -145,10 +145,18 @@ def _run_authors_screen(screen, clock, assets):
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return
             if back_btn.handle_event(event):
                 return
 
-        screen.blit(assets["background"], (0, 0))
+        if backdrop is not None:
+            screen.blit(backdrop, (0, 0))
+            dim = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            dim.fill((10, 14, 22, 200))
+            screen.blit(dim, (0, 0))
+        else:
+            screen.blit(assets["background"], (0, 0))
 
         title = title_font.render("Авторы", True, COLOR_TITLE)
         screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 3)))
@@ -160,12 +168,83 @@ def _run_authors_screen(screen, clock, assets):
                 screen.blit(surf, surf.get_rect(center=(WIDTH // 2, y)))
             y += 40
 
-        hint = hint_font.render("Нажмите «Назад», чтобы вернуться в меню", True, COLOR_SUBTITLE)
+        hint = hint_font.render("Esc / «Назад» — вернуться", True, COLOR_SUBTITLE)
         screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 160)))
 
         back_btn.handle_event(pygame.event.Event(pygame.MOUSEMOTION, pos=pygame.mouse.get_pos()))
         back_btn.update()
         back_btn.draw(screen)
+        pygame.display.flip()
+        clock.tick(FPS)
+
+
+def _build_pause_layout(assets):
+    title_font = _make_font(48, bold=True)
+    btn_font = _make_font(30, bold=True)
+    raw_frames = assets["btn_frames"]
+
+    title = title_font.render("Пауза", True, COLOR_TITLE)
+    gap = 16
+    block_h = title.get_height() + 28 + BTN_LARGE_H * 3 + gap * 2
+    top_y = (HEIGHT - block_h) // 2
+    center_x = WIDTH // 2
+
+    title_rect = title.get_rect(midtop=(center_x, top_y))
+    y = title_rect.bottom + 28
+
+    buttons = []
+    for label in ("Продолжить", "Авторы", "В меню"):
+        rect = pygame.Rect(0, y, BTN_LARGE_W, BTN_LARGE_H)
+        rect.centerx = center_x
+        buttons.append(AnimatedButton.create(rect, label, btn_font, raw_frames))
+        y += BTN_LARGE_H + gap
+
+    return {
+        "title": title,
+        "title_rect": title_rect,
+        "continue": buttons[0],
+        "authors": buttons[1],
+        "menu": buttons[2],
+    }
+
+
+def run_pause_menu(screen, clock, backdrop=None):
+    """Пауза в игре. Возвращает 'continue' | 'menu' | 'quit'."""
+    assets = _load_menu_assets()
+    layout = _build_pause_layout(assets)
+    keys = ("continue", "authors", "menu")
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return "quit"
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return "continue"
+            if layout["continue"].handle_event(event):
+                return "continue"
+            if layout["authors"].handle_event(event):
+                _run_authors_screen(screen, clock, assets, backdrop=backdrop)
+                layout = _build_pause_layout(assets)
+            if layout["menu"].handle_event(event):
+                return "menu"
+
+        mouse = pygame.event.Event(pygame.MOUSEMOTION, pos=pygame.mouse.get_pos())
+        for key in keys:
+            layout[key].handle_event(mouse)
+
+        if backdrop is not None:
+            screen.blit(backdrop, (0, 0))
+        else:
+            screen.fill((18, 22, 30))
+        dim = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        dim.fill((10, 14, 22, 170))
+        screen.blit(dim, (0, 0))
+
+        screen.blit(layout["title"], layout["title_rect"])
+        for key in keys:
+            layout[key].update()
+            layout[key].draw(screen)
+
         pygame.display.flip()
         clock.tick(FPS)
 

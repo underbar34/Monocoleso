@@ -121,6 +121,25 @@ def _draw_teleport(screen, tp, cam_x, cam_y, state=None):
     pygame.draw.circle(screen, (255, 255, 255), (cx, cy), TELEPORT_R - 6, 2)
 
 
+def _draw_checkpoint(screen, cp, cam_x, cam_y, state=None):
+    sx = cp["x"] - cam_x
+    sy = cp["y"] - cam_y
+    tex = cp.get("texture") if state else None
+    img = None
+    if state and tex:
+        img = load_texture(tex, state.texture_cache, max_size=(48, 64))
+    if img is not None:
+        screen.blit(img, (sx, sy))
+        return
+    # флажок / столб
+    pole = pygame.Rect(sx + 14, sy + 8, 6, 40)
+    pygame.draw.rect(screen, (90, 70, 40), pole)
+    flag = [(sx + 20, sy + 8), (sx + 42, sy + 18), (sx + 20, sy + 28)]
+    pygame.draw.polygon(screen, (255, 215, 64), flag)
+    pygame.draw.polygon(screen, (200, 160, 30), flag, 1)
+    pygame.draw.circle(screen, (255, 240, 150), (sx + 17, sy + 8), 4)
+
+
 def _draw_dialog(screen, state):
     d = state.dialog
     if d is None:
@@ -213,6 +232,10 @@ def render(screen, state, pls, ground_y, blur, walls=None):
     for tp in state.teleports:
         if view_l - 40 <= tp["x"] <= view_r and view_t - 40 <= tp["y"] <= view_b:
             _draw_teleport(screen, tp, cam_x, cam_y, state)
+
+    for cp in getattr(state, "checkpoints", []) or []:
+        if view_l - 40 <= cp["x"] <= view_r and view_t - 40 <= cp["y"] <= view_b:
+            _draw_checkpoint(screen, cp, cam_x, cam_y, state)
 
     for npc in state.npcs:
         if view_l - 40 <= npc["x"] <= view_r and view_t - 40 <= npc["y"] <= view_b:
@@ -307,4 +330,26 @@ def render(screen, state, pls, ground_y, blur, walls=None):
     _draw_hint(screen, state)
     _draw_dialog(screen, state)
 
+    pygame.display.flip()
+
+
+def draw_loading_screen(screen, level_label, progress=0.0):
+    """Короткий экран загрузки между уровнями. progress 0..1."""
+    progress = max(0.0, min(1.0, float(progress)))
+    screen.fill((18, 22, 30))
+    font_title = pygame.font.SysFont("dejavusans", 42, bold=True)
+    font_sub = pygame.font.SysFont("dejavusans", 22)
+    title = font_title.render("Загрузка...", True, (240, 244, 250))
+    screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 50)))
+    sub = font_sub.render(str(level_label), True, (160, 190, 210))
+    screen.blit(sub, sub.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 5)))
+
+    bar_w, bar_h = 360, 14
+    bar = pygame.Rect(0, 0, bar_w, bar_h)
+    bar.center = (WIDTH // 2, HEIGHT // 2 + 40)
+    pygame.draw.rect(screen, (40, 48, 60), bar, border_radius=6)
+    fill = bar.copy()
+    fill.width = max(4, int(bar_w * progress))
+    pygame.draw.rect(screen, (0, 188, 212), fill, border_radius=6)
+    pygame.draw.rect(screen, (120, 200, 220), bar, 1, border_radius=6)
     pygame.display.flip()

@@ -207,6 +207,9 @@ class GameState:
         self.texture_overrides = {}
         self.cam_x = None
         self.cam_y = None
+        self.current_level_path = None
+        self.pending_level = None  # {"path", "spawn_x", "spawn_y"}
+        self.level_name = "level"
 
         # Пикапы с уровня (extra_life / ability)
         self.level_pickups = []
@@ -259,9 +262,13 @@ class GameState:
         # NPC / телепорты / диалог
         self.npcs = []
         self.teleports = []
+        self.checkpoints = []
         self.teleport_cooldown = 0
         self.dialog = None  # {"name", "lines", "index"}
         self.interact_hint = None
+        self.checkpoint = None  # последнее сохранение (dict)
+        self.save_flash = 0  # кадры подсказки «Сохранено!»
+        self.pending_respawn = None  # {"path","spawn_x","spawn_y"} | None
 
         self.world_width = WORLD_WIDTH
         self.world_height = WORLD_HEIGHT
@@ -271,12 +278,35 @@ class GameState:
         if level is not None:
             self.apply_level(level)
 
-    def apply_level(self, level):
+    def apply_level(self, level, spawn_xy=None, level_path=None):
+        """Загружает геометрию уровня. Прогресс игрока (HP, абилки) не сбрасывается.
+        spawn_xy=(x,y) — точка появления; иначе player_spawn уровня.
+        """
+        if level_path:
+            self.current_level_path = level_path
+        from level_loader import level_display_name
+        self.level_name = level.get("name") or level_display_name(self.current_level_path)
         spawn = level.get("player_spawn", {"x": 120, "y": 640})
-        self.playerx = spawn.get("x", 120)
-        self.playery = spawn.get("y", 640)
+        if spawn_xy is not None:
+            self.playerx = float(spawn_xy[0])
+            self.playery = float(spawn_xy[1])
+        else:
+            self.playerx = spawn.get("x", 120)
+            self.playery = spawn.get("y", 640)
         self.cam_x = None
         self.cam_y = None
+        self.x_vel = 0
+        self.playermovey = 0
+        self.y_vel = 0
+        self.kb_vx = 0.0
+        self.kb_vy = 0.0
+        self.dialog = None
+        self.interact_hint = None
+        self.teleport_cooldown = 30
+        self.pending_level = None
+        self.coins = []
+        self.boss_loot = []
+        self.sprint_pickup = None
         self.world_width = level.get("world_width", WORLD_WIDTH)
         self.world_height = level.get("world_height", WORLD_HEIGHT)
         self.world_top = level.get("world_top", WORLD_TOP)
@@ -285,7 +315,16 @@ class GameState:
         self.level_pickups = []
         self.npcs = []
         self.teleports = []
+        self.checkpoints = []
         self.boss_alive = False
+        self.boss_dying = False
+        self.boss_arena_locked = False
+        self.boss_melee = None
+        self.boss_projectiles = []
+        self.boss_shake_timer = 0
+        self.loot_spawned = False
+        if hasattr(self, "_boss_base_y"):
+            del self._boss_base_y
         self.texture_overrides = dict(level.get("texture_overrides") or {})
 
         for obj in level.get("objects", []):
@@ -318,8 +357,6 @@ class GameState:
                     idle0 = int(phases[0].get("idle", 90))
                 self.boss_idle_timer = idle0
                 self.loot_spawned = False
-                if hasattr(self, "_boss_base_y"):
-                    del self._boss_base_y
             elif t == "ability":
                 aid = obj.get("id", "sprint")
                 tex = obj.get("texture") or self.texture_overrides.get(f"ability:{aid}")
@@ -356,6 +393,14 @@ class GameState:
                     "y": obj["y"],
                     "target_x": obj.get("target_x", obj["x"] + 200),
                     "target_y": obj.get("target_y", obj["y"]),
+                    "target_level": (obj.get("target_level") or "").strip(),
+                    "texture": tex,
+                })
+            elif t == "checkpoint":
+                tex = obj.get("texture") or self.texture_overrides.get("checkpoint")
+                self.checkpoints.append({
+                    "x": obj["x"],
+                    "y": obj["y"],
                     "texture": tex,
                 })
 
