@@ -66,6 +66,7 @@ BOSS_CATALOG = {
         "sprite": "holodos1",
         "defaults": {
             "arena_x_offset": -1300,
+            "arena_y_offset": 500,
             "min_x_offset": -1100,
             "max_x_offset": 1200,
         },
@@ -104,6 +105,7 @@ TOOL_CATEGORIES = (
     "teleport",
     "npc",
     "checkpoint",
+    "enemy",
 )
 
 OBJECT_COLORS = {
@@ -115,6 +117,7 @@ OBJECT_COLORS = {
     "teleport": (0, 188, 212),
     "npc": (255, 152, 0),
     "checkpoint": (255, 215, 64),
+    "enemy": (200, 60, 60),
     "player_spawn": (244, 67, 54),
     "platform": (120, 120, 120),
     "wall": (90, 90, 110),
@@ -129,6 +132,7 @@ OBJECT_LABELS = {
     "teleport": "Телепорт",
     "npc": "NPC",
     "checkpoint": "Сохранение",
+    "enemy": "Враг",
     "player_spawn": "Спавн",
     "platform": "Платформа",
     "wall": "Стена",
@@ -177,6 +181,10 @@ def normalize_object(obj):
             o["id"] = "holodos"
         # Текстуру босса из уровня не принимаем — только каталог спрайтов
         o.pop("texture", None)
+        o.setdefault("arena_x", max(0, o.get("x", 0) - 1300))
+        o.setdefault("arena_y", o.get("y", 0) + 500)
+        o.setdefault("min_x", max(0, o.get("x", 0) - 1100))
+        o.setdefault("max_x", o.get("x", 0) + 1200)
         cat = catalog_moveset(o["id"])
         if not o.get("moveset") and cat:
             o["moveset"] = deep_copy_moveset(cat)
@@ -191,6 +199,12 @@ def normalize_object(obj):
             o["target_level"] = ""
         else:
             o["target_level"] = str(tl).strip()
+    elif t == "enemy":
+        o.setdefault("dir", 1)
+        if int(o.get("dir", 1) or 1) >= 0:
+            o["dir"] = 1
+        else:
+            o["dir"] = -1
     return o
 
 
@@ -209,6 +223,7 @@ def default_object(category, x, y, variant_id=None):
             "x": x,
             "y": y,
             "arena_x": max(0, x + d["arena_x_offset"]),
+            "arena_y": y + d.get("arena_y_offset", 500),
             "min_x": max(0, x + d["min_x_offset"]),
             "max_x": x + d["max_x_offset"],
         }
@@ -241,6 +256,8 @@ def default_object(category, x, y, variant_id=None):
         }
     if category == "checkpoint":
         return {"type": "checkpoint", "x": x, "y": y}
+    if category == "enemy":
+        return {"type": "enemy", "x": x, "y": y, "dir": 1}
     # legacy direct types
     if category in _LEGACY_ABILITY:
         return default_object("ability", x, y, _LEGACY_ABILITY[category])

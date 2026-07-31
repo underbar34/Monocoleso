@@ -7,7 +7,7 @@ from config import (
     JUMP_TIMER_MAX, JUMP_FORCE, JUMP_HOLD_MAX, JUMP_HOLD_BOOST, JUMP_CUT_MULT,
     GRAVITY_AIR, FALL_SPEED_MAX, WIDTH, HEIGHT, WORLD_WIDTH, HEALTH_MAX,
     NEUYAZVIMOST_MAX, BOSS_MAX_HP, BOSS_DAMAGE, BOSS_X, BOSS_Y,
-    BOSS_W, BOSS_H, BOSS_ARENA_X, BOSS_MIN_X, BOSS_MAX_X,
+    BOSS_W, BOSS_H, BOSS_ARENA_X, BOSS_ARENA_Y, BOSS_MIN_X, BOSS_MAX_X,
     BOSS_SPEED, BOSS_SPEED_PHASE2, BOSS_SPEED_PHASE3, BOSS_HIT_COOLDOWN, BOSS_CONTACT_DAMAGE,
     KNOCKBACK_SIDE, KNOCKBACK_VERTICAL, KNOCKBACK_UP, KNOCKBACK_UP_MULT,
     KNOCKBACK_BLEND, KNOCKBACK_DECAY, KNOCKBACK_RISE_MAX,
@@ -39,13 +39,17 @@ def _boss_camera_locked(state):
 
 
 def get_camera(state):
-    """Камера с плавным следованием; на боссфайте левый край = arena_x."""
-    target_y = state.playery - HEIGHT // 2
+    """Камера с плавным следованием.
+    На боссфайте: левый край = arena_x, нижний край = arena_y.
+    """
     if _boss_camera_locked(state):
         target_x = float(getattr(state, "boss_arena_x", BOSS_ARENA_X))
+        arena_y = float(getattr(state, "boss_arena_y", BOSS_ARENA_Y))
+        target_y = arena_y - HEIGHT
         lerp = CAM_ARENA_LERP
     else:
         target_x = state.playerx - WIDTH // 3
+        target_y = state.playery - HEIGHT // 2
         lerp = CAM_FOLLOW_LERP
 
     if getattr(state, "cam_x", None) is None:
@@ -180,8 +184,14 @@ def _aim_at_player(state, speed, spread=0.0):
 
 
 def _boss_in_arena(state):
-    arena = getattr(state, "boss_arena_x", BOSS_ARENA_X)
-    return state.playerx >= arena - 200
+    """Игрок в зоне арены: правее угла arena_x и внутри вертикальной полосы камеры."""
+    arena_x = getattr(state, "boss_arena_x", BOSS_ARENA_X)
+    arena_y = getattr(state, "boss_arena_y", BOSS_ARENA_Y)
+    in_x = state.playerx >= arena_x - 200
+    top = arena_y - HEIGHT
+    # небольшой запас сверху/снизу, чтобы вход не был слишком жёстким
+    in_y = (top - 200) <= state.playery <= (arena_y + 50)
+    return in_x and in_y
 
 
 def _update_boss_arena_lock(state):
@@ -197,9 +207,13 @@ def _clamp_boss_arena(state):
     _update_boss_arena_lock(state)
     if not state.boss_arena_locked:
         return
-    arena = getattr(state, "boss_arena_x", BOSS_ARENA_X)
-    left = arena - 200
+    arena_x = getattr(state, "boss_arena_x", BOSS_ARENA_X)
+    arena_y = getattr(state, "boss_arena_y", BOSS_ARENA_Y)
+    left = arena_x - 200
     right = getattr(state, "boss_max_x", BOSS_MAX_X) - PLAYER_W
+    top = arena_y - HEIGHT
+    bottom = arena_y - PLAYER_H
+
     if state.playerx < left:
         state.playerx = left
         state.x_vel = 0
@@ -208,6 +222,17 @@ def _clamp_boss_arena(state):
         state.playerx = right
         state.x_vel = 0
         state.kb_vx = 0
+
+    if state.playery < top:
+        state.playery = top
+        state.y_vel = 0
+        state.kb_vy = 0
+        state.playermovey = 0
+    elif state.playery > bottom:
+        state.playery = bottom
+        state.y_vel = 0
+        state.kb_vy = 0
+        state.playermovey = 0
 
 
 def _boss_moveset(state):

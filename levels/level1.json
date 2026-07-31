@@ -1309,7 +1309,7 @@
       "id": "holodos",
       "x": 2340,
       "y": -1930,
-      "arena_x": 1105,
+      "arena_x": 1555,
       "min_x": 1305,
       "max_x": 3605,
       "moveset": {
@@ -1572,7 +1572,8 @@
             ]
           }
         }
-      }
+      },
+      "arena_y": -1430
     }
   ],
   "texture_overrides": {

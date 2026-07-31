@@ -69,6 +69,7 @@ BOSS_Y = 233
 BOSS_W = 423
 BOSS_H = 477
 BOSS_ARENA_X = 2500
+BOSS_ARENA_Y = 900
 BOSS_MIN_X = 2700
 BOSS_MAX_X = 5000
 BOSS_SPEED = 1.8
@@ -235,6 +236,7 @@ class GameState:
         self.boss_x = BOSS_X
         self.boss_y = BOSS_Y
         self.boss_arena_x = BOSS_ARENA_X
+        self.boss_arena_y = BOSS_ARENA_Y
         self.boss_min_x = BOSS_MIN_X
         self.boss_max_x = BOSS_MAX_X
         self.boss_hp = BOSS_MAX_HP
@@ -263,6 +265,7 @@ class GameState:
         self.npcs = []
         self.teleports = []
         self.checkpoints = []
+        self.enemies = []
         self.teleport_cooldown = 0
         self.dialog = None  # {"name", "lines", "index"}
         self.interact_hint = None
@@ -316,6 +319,7 @@ class GameState:
         self.npcs = []
         self.teleports = []
         self.checkpoints = []
+        self.enemies = []
         self.boss_alive = False
         self.boss_dying = False
         self.boss_arena_locked = False
@@ -337,6 +341,10 @@ class GameState:
                 self.boss_x = obj.get("x", BOSS_X)
                 self.boss_y = obj.get("y", BOSS_Y)
                 self.boss_arena_x = obj.get("arena_x", BOSS_ARENA_X)
+                self.boss_arena_y = obj.get(
+                    "arena_y",
+                    obj.get("y", BOSS_Y) + 500,
+                )
                 self.boss_min_x = obj.get("min_x", BOSS_MIN_X)
                 self.boss_max_x = obj.get("max_x", BOSS_MAX_X)
                 self.boss_hp = BOSS_MAX_HP
@@ -403,6 +411,12 @@ class GameState:
                     "y": obj["y"],
                     "texture": tex,
                 })
+            elif t == "enemy":
+                from enemies import make_enemy_from_object
+                e = make_enemy_from_object(obj)
+                tex = obj.get("texture") or self.texture_overrides.get("enemy")
+                e["texture"] = tex
+                self.enemies.append(e)
 
         lives = [p for p in self.level_pickups if p["type"] == "extra_life"]
         if lives:

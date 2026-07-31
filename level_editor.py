@@ -8,9 +8,10 @@
   ЛКМ          — поставить выбранный объект / выделить / перетащить
   ПКМ          — удалить объект/платформу под курсором
   WASD/стрелки — камера
-  1–9          — выбор инструмента
+  1–9, 0      — выбор инструмента (0 = 10-й)
   T            — для телепорта: клик задаёт точку назначения (x,y)
   L            — для телепорта: цикл целевого уровня (тот же / levelN.json)
+  B            — для босса: клик задаёт угол арены (arena_x, arena_y)
   Enter        — редактировать диалог выделенного NPC
   M            — мувсеты выделенного босса
   I            — текстура ТИПА (все абилки спринта / все платформы / …)
@@ -60,6 +61,7 @@ from textures import (
     stamp_override_on_level,
     ability_override_key,
 )
+from enemies import ENEMY_W, ENEMY_H
 from platforms import PLATFORM_H
 from boss_moves import (
     ACTIONS,
@@ -125,6 +127,7 @@ class LevelEditor:
         self.drag_ox = 0
         self.drag_oy = 0
         self.setting_teleport_target = False
+        self.setting_boss_arena = False
         self.status = f"Загружено: {path}"
         self.status_timer = 180
 
@@ -199,6 +202,11 @@ class LevelEditor:
         for i, obj in enumerate(self.level["objects"]):
             if obj["type"] == "checkpoint":
                 r = pygame.Rect(obj["x"], obj["y"], 40, 48)
+                if r.inflate(HIT_PAD, HIT_PAD).collidepoint(wx, wy):
+                    return ("object", i)
+        for i, obj in enumerate(self.level["objects"]):
+            if obj["type"] == "enemy":
+                r = pygame.Rect(obj["x"], obj["y"], ENEMY_W, ENEMY_H)
                 if r.inflate(HIT_PAD, HIT_PAD).collidepoint(wx, wy):
                     return ("object", i)
         for i, obj in enumerate(self.level["objects"]):
@@ -358,6 +366,17 @@ class LevelEditor:
         dest = (obj.get("target_level") or "").strip()
         where = dest if dest else "этот уровень"
         self.set_status(f"Спавн → ({obj['target_x']}, {obj['target_y']}) в {where}")
+
+    def set_boss_arena_corner(self, wx, wy):
+        obj = self.get_selected_obj()
+        if not obj or not _is_boss_obj(obj):
+            self.set_status("Выделите босса, затем B и клик")
+            self.setting_boss_arena = False
+            return
+        obj["arena_x"] = int(_snap(wx))
+        obj["arena_y"] = int(_snap(wy))
+        self.setting_boss_arena = False
+        self.set_status(f"Угол арены: ({obj['arena_x']}, {obj['arena_y']})")
 
     def cycle_teleport_level(self):
         """L: цикл целевого уровня телепорта — '' (этот) → каждый .json в levels/."""
@@ -1370,11 +1389,24 @@ class LevelEditor:
             img = self.images.get(sprite) or self.images["holodos1"]
             color = meta.get("color", OBJECT_COLORS["boss"])
             self.screen.blit(img, (sx, sy))
-            arena = obj.get("arena_x", obj["x"] - 1300)
-            ax = self.screen_x(arena)
-            pygame.draw.line(self.screen, (255, 100, 100), (ax, 0), (ax, HEIGHT), 1)
-            mark = self.font_sm.render("арена→", True, (255, 100, 100))
-            self.screen.blit(mark, (ax + 4, 40))
+            arena_x = obj.get("arena_x", obj["x"] - 1300)
+            arena_y = obj.get("arena_y", obj["y"] + 500)
+            ax = self.screen_x(arena_x)
+            ay = self.screen_y(arena_y)
+            # угол арены: левый край камеры (вертикаль) + нижний край (горизонталь)
+            view_w = WIDTH - PANEL_W
+            pygame.draw.line(self.screen, (255, 100, 100), (ax, 0), (ax, HEIGHT), 2)
+            pygame.draw.line(self.screen, (255, 100, 100), (0, ay), (view_w, ay), 2)
+            # рамка зоны камеры WIDTH×HEIGHT от угла
+            cam_top = self.screen_y(arena_y - HEIGHT)
+            cam_right = self.screen_x(arena_x + WIDTH)
+            rect = pygame.Rect(ax, cam_top, max(4, cam_right - ax), max(4, ay - cam_top))
+            overlay = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+            overlay.fill((255, 80, 80, 28))
+            self.screen.blit(overlay, rect.topleft)
+            pygame.draw.rect(self.screen, (255, 120, 120), rect, 1)
+            mark = self.font_sm.render("угол арены", True, (255, 100, 100))
+            self.screen.blit(mark, (ax + 6, ay - 18))
             if selected:
                 pygame.draw.rect(
                     self.screen, (255, 80, 80),
@@ -1406,7 +1438,7 @@ class LevelEditor:
             return
 
         color = OBJECT_COLORS.get(t, (100, 100, 100))
-        type_tex = get_override(self.level, t) if t in ("extra_life", "npc", "teleport", "checkpoint") else None
+        type_tex = get_override(self.level, t) if t in ("extra_life", "npc", "teleport", "checkpoint", "enemy") else None
         if t == "extra_life":
             img = self.images["extra_life"]
             tex = obj.get("texture") or type_tex
@@ -1449,6 +1481,29 @@ class LevelEditor:
                 flag = [(sx + 20, sy + 8), (sx + 42, sy + 18), (sx + 20, sy + 28)]
                 pygame.draw.polygon(self.screen, color, flag)
                 pygame.draw.circle(self.screen, (255, 240, 150), (sx + 17, sy + 8), 4)
+            if selected:
+                pygame.draw.rect(self.screen, (255, 80, 80), body.inflate(6, 6), 2)
+        elif t == "enemy":
+            tex = obj.get("texture") or type_tex
+            custom = load_texture(tex, self.texture_cache, max_size=(56, 64)) if tex else None
+            if custom is not None:
+                if int(obj.get("dir", 1)) < 0:
+                    custom = pygame.transform.flip(custom, True, False)
+                self.screen.blit(custom, (sx, sy))
+                body = pygame.Rect(sx, sy, custom.get_width(), custom.get_height())
+            else:
+                body = pygame.Rect(sx, sy, ENEMY_W, ENEMY_H)
+                pygame.draw.rect(self.screen, color, body, border_radius=4)
+                pygame.draw.rect(self.screen, (80, 20, 20), body, 2, border_radius=4)
+                d = int(obj.get("dir", 1))
+                ex = body.x + (body.w - 10 if d >= 0 else 10)
+                pygame.draw.circle(self.screen, (255, 255, 255), (ex, body.y + 12), 4)
+                # стрелка направления
+                tip_x = body.centerx + (14 if d >= 0 else -14)
+                pygame.draw.line(
+                    self.screen, (255, 220, 220),
+                    (body.centerx, body.centery), (tip_x, body.centery), 2,
+                )
             if selected:
                 pygame.draw.rect(self.screen, (255, 80, 80), body.inflate(6, 6), 2)
         elif t == "npc":
@@ -1532,6 +1587,7 @@ class LevelEditor:
             "WASD — камера",
             "T — цель телепорта (x,y)",
             "L — уровень телепорта",
+            "B — угол арены босса",
             "[ / ] — др. уровень",
             "Ctrl+N — новый уровень",
             "Enter — диалог NPC",
@@ -1626,9 +1682,10 @@ class LevelEditor:
             lines = [
                 f"Босс: {boss_label(bid)}",
                 f"x={obj['x']} y={obj['y']}",
-                f"arena_x={obj.get('arena_x')}",
+                f"arena=({obj.get('arena_x')}, {obj.get('arena_y')})",
                 f"min_x={obj.get('min_x')} max_x={obj.get('max_x')}",
                 f"мувсет: {n_phases} фаз, {n_moves} мувов",
+                "B + клик — угол арены",
                 "M — редактор мувсетов",
                 "(текстуру босса менять нельзя)",
             ]
@@ -1667,6 +1724,13 @@ class LevelEditor:
                 f"уровень: {dest or '(этот)'}",
                 "T + клик = координаты",
                 "L = цикл уровней",
+            ]
+        elif obj["type"] == "enemy":
+            d = int(obj.get("dir", 1))
+            lines += [
+                f"dir={'→' if d >= 0 else '←'}",
+                "R — развернуть",
+                "патруль 2с + обрыв",
             ]
         elif obj["type"] == "npc":
             lines.append(f"name={obj.get('name', 'NPC')}")
@@ -1720,11 +1784,13 @@ class LevelEditor:
             if event.key == pygame.K_ESCAPE:
                 self.selected = None
                 self.setting_teleport_target = False
+                self.setting_boss_arena = False
                 return True
             if event.key == pygame.K_t:
                 obj = self.get_selected_obj()
                 if obj and obj.get("type") == "teleport":
                     self.setting_teleport_target = True
+                    self.setting_boss_arena = False
                     dest = (obj.get("target_level") or "").strip()
                     if dest:
                         self.set_status(f"Клик = спавн в {dest}")
@@ -1732,6 +1798,15 @@ class LevelEditor:
                         self.set_status("Кликните точку назначения телепорта")
                 else:
                     self.set_status("Сначала выделите телепорт")
+                return True
+            if event.key == pygame.K_b:
+                obj = self.get_selected_obj()
+                if obj and _is_boss_obj(obj):
+                    self.setting_boss_arena = True
+                    self.setting_teleport_target = False
+                    self.set_status("Кликните угол арены (лево+низ камеры)")
+                else:
+                    self.set_status("Сначала выделите босса")
                 return True
             if event.key == pygame.K_l:
                 self.cycle_teleport_level()
@@ -1754,6 +1829,18 @@ class LevelEditor:
                     self.tool = TOOLS[idx]
                     self.set_status(f"Инструмент: {OBJECT_LABELS.get(self.tool, self.tool)}")
                 return True
+            if event.key == pygame.K_0:
+                idx = 9
+                if idx < len(TOOLS):
+                    self.tool = TOOLS[idx]
+                    self.set_status(f"Инструмент: {OBJECT_LABELS.get(self.tool, self.tool)}")
+                return True
+            if event.key == pygame.K_r:
+                obj = self.get_selected_obj()
+                if obj and obj.get("type") == "enemy":
+                    obj["dir"] = -1 if int(obj.get("dir", 1)) >= 0 else 1
+                    self.set_status(f"Враг смотрит {'→' if obj['dir'] > 0 else '←'}")
+                    return True
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             mx, my = event.pos
@@ -1780,6 +1867,9 @@ class LevelEditor:
             if event.button == 1:
                 if self.setting_teleport_target:
                     self.set_teleport_target(wx, wy)
+                    return True
+                if self.setting_boss_arena:
+                    self.set_boss_arena_corner(wx, wy)
                     return True
                 if not self.start_drag(wx, wy):
                     self.place_at(wx, wy)
@@ -1850,10 +1940,14 @@ class LevelEditor:
 
             self.draw_world()
             self.draw_panel()
-            if self.setting_teleport_target:
+            if self.setting_teleport_target or self.setting_boss_arena:
                 mx, my = pygame.mouse.get_pos()
                 if mx < WIDTH - PANEL_W:
-                    pygame.draw.circle(self.screen, (255, 80, 80), (mx, my), 10, 2)
+                    col = (255, 200, 80) if self.setting_boss_arena else (255, 80, 80)
+                    pygame.draw.circle(self.screen, col, (mx, my), 10, 2)
+                    if self.setting_boss_arena:
+                        pygame.draw.line(self.screen, col, (mx, 0), (mx, HEIGHT), 1)
+                        pygame.draw.line(self.screen, col, (0, my), (WIDTH - PANEL_W, my), 1)
             if self.moveset_mode:
                 self.draw_moveset_overlay()
             if self.texture_mode:

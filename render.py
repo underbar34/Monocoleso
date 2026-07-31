@@ -140,6 +140,36 @@ def _draw_checkpoint(screen, cp, cam_x, cam_y, state=None):
     pygame.draw.circle(screen, (255, 240, 150), (sx + 17, sy + 8), 4)
 
 
+def _draw_enemy(screen, e, cam_x, cam_y, state=None):
+    if not e.get("alive", True):
+        return
+    sx = e["x"] - cam_x
+    sy = e["y"] - cam_y
+    tex = e.get("texture") if state else None
+    img = None
+    if state and tex:
+        img = load_texture(tex, state.texture_cache, max_size=(56, 64))
+    if img is not None:
+        if e.get("dir", 1) < 0:
+            img = pygame.transform.flip(img, True, False)
+        screen.blit(img, (sx, sy))
+        return
+    w, h = e.get("w", 36), e.get("h", 44)
+    body = pygame.Rect(sx, sy, w, h)
+    bob = 1 if (e.get("anim", 0) // 10) % 2 == 0 else 0
+    body.y += bob
+    pygame.draw.rect(screen, (200, 60, 60), body, border_radius=4)
+    pygame.draw.rect(screen, (80, 20, 20), body, 2, border_radius=4)
+    # глазки в сторону ходьбы
+    eye_y = body.y + 12
+    if e.get("dir", 1) >= 0:
+        pygame.draw.circle(screen, (255, 255, 255), (body.x + w - 10, eye_y), 4)
+        pygame.draw.circle(screen, (20, 20, 20), (body.x + w - 9, eye_y), 2)
+    else:
+        pygame.draw.circle(screen, (255, 255, 255), (body.x + 10, eye_y), 4)
+        pygame.draw.circle(screen, (20, 20, 20), (body.x + 9, eye_y), 2)
+
+
 def _draw_dialog(screen, state):
     d = state.dialog
     if d is None:
@@ -236,6 +266,12 @@ def render(screen, state, pls, ground_y, blur, walls=None):
     for cp in getattr(state, "checkpoints", []) or []:
         if view_l - 40 <= cp["x"] <= view_r and view_t - 40 <= cp["y"] <= view_b:
             _draw_checkpoint(screen, cp, cam_x, cam_y, state)
+
+    for enemy in getattr(state, "enemies", []) or []:
+        if not enemy.get("alive", True):
+            continue
+        if view_l - 40 <= enemy["x"] <= view_r and view_t - 40 <= enemy["y"] <= view_b:
+            _draw_enemy(screen, enemy, cam_x, cam_y, state)
 
     for npc in state.npcs:
         if view_l - 40 <= npc["x"] <= view_r and view_t - 40 <= npc["y"] <= view_b:

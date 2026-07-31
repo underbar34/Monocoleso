@@ -73,10 +73,10 @@ def texture_label(path, max_len=42):
 
 # Типы, которым можно менять текстуру
 TEXTUREABLE_OBJECT_TYPES = frozenset({
-    "ability", "sprint_skill", "dash_skill", "extra_life", "npc", "teleport", "checkpoint",
+    "ability", "sprint_skill", "dash_skill", "extra_life", "npc", "teleport", "checkpoint", "enemy",
 })
 TEXTUREABLE_TOOLS = frozenset({
-    "platform", "wall", "ability", "extra_life", "npc", "teleport", "checkpoint",
+    "platform", "wall", "ability", "extra_life", "npc", "teleport", "checkpoint", "enemy",
 })
 TEXTUREABLE_KINDS = frozenset({"platform", "wall", "object"})
 
@@ -96,7 +96,7 @@ def override_key_for_object(obj):
         else:
             aid = "dash"
         return ability_override_key(aid)
-    if t in ("extra_life", "npc", "teleport", "checkpoint"):
+    if t in ("extra_life", "npc", "teleport", "checkpoint", "enemy"):
         return t
     return None
 
@@ -104,7 +104,7 @@ def override_key_for_object(obj):
 def override_key_for_tool(tool, ability_variant=None):
     if tool == "ability":
         return ability_override_key(ability_variant or "sprint")
-    if tool in ("platform", "wall", "extra_life", "npc", "teleport", "checkpoint"):
+    if tool in ("platform", "wall", "extra_life", "npc", "teleport", "checkpoint", "enemy"):
         return tool
     return None
 
@@ -154,7 +154,7 @@ def stamp_override_on_level(level, key, path):
             elif t == "dash_skill" and aid == "dash":
                 _apply(o)
         return
-    if key in ("extra_life", "npc", "teleport", "checkpoint"):
+    if key in ("extra_life", "npc", "teleport", "checkpoint", "enemy"):
         for o in level.get("objects", []):
             if o.get("type") == key:
                 _apply(o)

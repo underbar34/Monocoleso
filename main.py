@@ -9,6 +9,7 @@ from logic import (
     update_extra_life, update_boss, update_loot, update_interactions,
     request_respawn_from_checkpoint, apply_checkpoint_progress,
 )
+from enemies import update_enemies
 from render import render, draw_loading_screen
 from motion_blur import MotionBlur
 from menu import run_menu, run_pause_menu
@@ -107,6 +108,7 @@ def run_game(screen, clock, level_path=DEFAULT_LEVEL_PATH):
         )
         update_extra_life(state)
         update_boss(state)
+        update_enemies(state, pls, walls)
         update_loot(state)
         update_interactions(state)
         handle_events(state, keys, ground_y, events)
