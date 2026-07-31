@@ -13,6 +13,7 @@ from enemies import update_enemies
 from render import render, draw_loading_screen
 from motion_blur import MotionBlur
 from menu import run_menu, run_pause_menu
+from inventory import sync_inventory
 from savegame import read_save
 
 LOADING_FRAMES = 48  # ~0.8 сек при 60 FPS
@@ -74,6 +75,7 @@ def run_game(screen, clock, level_path=DEFAULT_LEVEL_PATH):
         state = GameState(images, level)
         state.current_level_path = level_path
         state.level_name = level.get("name") or level_path
+    sync_inventory(state)
 
     pls = create_platforms(level)
     walls = create_walls(level)
@@ -86,8 +88,14 @@ def run_game(screen, clock, level_path=DEFAULT_LEVEL_PATH):
         for event in events:
             if event.type == pygame.QUIT:
                 game_run = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                open_pause = True
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_i:
+                    state.inventory_open = not getattr(state, "inventory_open", False)
+                elif event.key == pygame.K_ESCAPE:
+                    if getattr(state, "inventory_open", False):
+                        state.inventory_open = False
+                    else:
+                        open_pause = True
 
         if open_pause:
             backdrop = screen.copy()
@@ -100,19 +108,27 @@ def run_game(screen, clock, level_path=DEFAULT_LEVEL_PATH):
 
         keys = pygame.key.get_pressed()
 
-        update_akum(state)
-        ground_y = get_ground_y(
-            pls, state.playerx, state.playery,
-            getattr(state, "ground_y_default", None),
-            walls,
-        )
-        update_extra_life(state)
-        update_boss(state)
-        update_enemies(state, pls, walls)
-        update_loot(state)
-        update_interactions(state)
-        handle_events(state, keys, ground_y, events)
-        update_player_movement(state, keys, ground_y, walls, pls)
+        if not getattr(state, "inventory_open", False):
+            update_akum(state)
+            ground_y = get_ground_y(
+                pls, state.playerx, state.playery,
+                getattr(state, "ground_y_default", None),
+                walls,
+            )
+            update_extra_life(state)
+            update_boss(state)
+            update_enemies(state, pls, walls)
+            update_loot(state)
+            update_interactions(state)
+            handle_events(state, keys, ground_y, events)
+            update_player_movement(state, keys, ground_y, walls, pls)
+        else:
+            ground_y = get_ground_y(
+                pls, state.playerx, state.playery,
+                getattr(state, "ground_y_default", None),
+                walls,
+            )
+
         render(screen, state, pls, ground_y, blur, walls)
 
         if getattr(state, "pending_level", None):

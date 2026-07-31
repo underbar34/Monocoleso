@@ -410,11 +410,22 @@ def _spawn_boss_loot(state):
 
 
 def _grant_ability(state, ability_id):
+    from inventory import add_inventory_item
+    from level_loader import ability_label, ABILITY_CATALOG
+
     if ability_id == "sprint":
         state.sprint_podobran = True
         state.sprint_unlocked = True
     elif ability_id == "dash":
         state.dash_unlocked = True
+    meta = ABILITY_CATALOG.get(ability_id) or {}
+    icon = meta.get("image", "sprint_skill" if ability_id == "sprint" else "dash_skill")
+    add_inventory_item(
+        state,
+        f"ability:{ability_id}",
+        ability_label(ability_id),
+        icon,
+    )
 
 
 def _boss_speed(state):
@@ -559,6 +570,8 @@ def update_loot(state):
             coin["vx"] *= 0.85
         if _pickup_collision(state.playerx, state.playery, coin["x"], coin["y"], 20):
             coin["collected"] = True
+            from inventory import add_inventory_item
+            add_inventory_item(state, "coin", "Монета", "coin", stackable=True)
 
     state.coins = [c for c in state.coins if not c["collected"]]
 
@@ -629,6 +642,8 @@ def _fall_death(state):
 
 def _collect_pickup(state, pickup):
     if pickup["type"] == "extra_life":
+        from inventory import add_inventory_item
+        add_inventory_item(state, "extra_life", "Доп. жизнь", "extra_life", stackable=True)
         if state.health < HEALTH_MAX:
             state.health += 1
         remaining = [
@@ -726,6 +741,8 @@ def apply_checkpoint_progress(state, data):
     state.akumpower = int(data.get("akumpower", 0))
     hp = int(data.get("health", HEALTH_MAX))
     state.health = max(1, min(HEALTH_MAX, hp))
+    from inventory import sync_inventory
+    sync_inventory(state)
 
 
 def request_respawn_from_checkpoint(state):

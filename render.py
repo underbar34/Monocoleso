@@ -330,7 +330,8 @@ def render(screen, state, pls, ground_y, blur, walls=None):
         img = _resolve_img(state, p.get("texture") or ov, "sprint_skill", max_size=(56, 56))
         screen.blit(img, (p["x"] - cam_x, p["y"] - cam_y))
 
-    blur.update(state.playerx, state.playery, state.player, strong=False)
+    if not getattr(state, "inventory_open", False):
+        blur.update(state.playerx, state.playery, state.player, strong=False)
     blur.draw(screen, cam_x, cam_y)
     screen.blit(state.player, (state.playerx - cam_x, state.playery - cam_y))
 
@@ -355,16 +356,21 @@ def render(screen, state, pls, ground_y, blur, walls=None):
         screen.blit(state.images['playerataka4'], (state.playerx + 8 - cam_x, state.playery + 5 - cam_y))
         state.vrematakpl += 1
     else:
-        state.atakapl = False
-        state.flagatak = 0
-        state.vrematakpl = 0
+            state.atakapl = False
+            state.flagatak = 0
+            state.vrematakpl = 0
 
-    state.neuyazvimost += 1
+    if not getattr(state, "inventory_open", False):
+        state.neuyazvimost += 1
 
     screen.blit(state.akum, (0, 2))
     _draw_boss_hp_bar(screen, state)
     _draw_hint(screen, state)
     _draw_dialog(screen, state)
+
+    if getattr(state, "inventory_open", False):
+        from inventory import draw_inventory_overlay
+        draw_inventory_overlay(screen, state)
 
     pygame.display.flip()
 

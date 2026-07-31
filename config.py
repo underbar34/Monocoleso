@@ -113,6 +113,7 @@ def load_images():
     images['playerstoit2'] = pygame.image.load("Assets/Tems/Tems(stoit2).png")
     images['platform'] = pygame.image.load("Assets/locat/platform.png")
     images['wall'] = pygame.transform.rotate(images['platform'], 90)
+    images['inventory'] = pygame.image.load("Assets/bg/inventory.png")
 
     for i in range(1, 5):
         raw = pygame.image.load(f"Assets/holodos/holodos{i}.png")
@@ -146,16 +147,17 @@ def load_images():
     _load_holodos("ledholodosnis", "holodos_ice", max_h=48, max_w=320)
     _load_holodos("boegolovka", "boegolovka", max_h=90)
 
-    extra_life = pygame.Surface((28, 28))
-    extra_life.fill((76, 175, 80))
+    extra_life = pygame.image.load("Assets/bg/hilka.png")
     images['extra_life'] = extra_life
 
-    sprint_skill = pygame.Surface((28, 28))
-    sprint_skill.fill((156, 39, 176))
+    sprint_skill = pygame.image.load("Assets/bg/uskorenie.png")
     images['sprint_skill'] = sprint_skill
 
-    dash_skill = pygame.Surface((28, 28))
-    dash_skill.fill((255, 87, 34))
+    try:
+        dash_skill = pygame.image.load("Assets/bg/polotense.png")
+    except pygame.error:
+        dash_skill = pygame.Surface((28, 28))
+        dash_skill.fill((255, 87, 34))
     images['dash_skill'] = dash_skill
 
     coin = pygame.Surface((20, 20), pygame.SRCALPHA)
@@ -272,6 +274,8 @@ class GameState:
         self.checkpoint = None  # последнее сохранение (dict)
         self.save_flash = 0  # кадры подсказки «Сохранено!»
         self.pending_respawn = None  # {"path","spawn_x","spawn_y"} | None
+        self.inventory = []
+        self.inventory_open = False
 
         self.world_width = WORLD_WIDTH
         self.world_height = WORLD_HEIGHT
